@@ -24,7 +24,8 @@ import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 STUDIO_VERSION = "1.0.0"
-DEFAULT_REPO = "enter-the-void/void-studio"     # GitHub owner/repo – in den Einstellungen änderbar
+DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
+PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~/.config"), "VOID-Bridge")
 TOKEN_FILE = os.path.join(DATA_DIR, "void-twitch-token.json")
@@ -992,6 +993,11 @@ HOTKEYS = [("replay", "VOID: Letzten Alert wiederholen", ctl_replay),
 hotkey_ids = {}
 
 
+def ui_portal(*_):
+    webbrowser.open(PORTAL_STUDIO)
+    return False
+
+
 def script_description():
     return ("<b>VOID Studio</b><br>Szenen-Packs verwalten und die VOID Twitch Bridge – Alerts, Sounds, Chat, "
             "Ziele und Rückblick ohne Fremddienst.<br>Ausgaben unter „Skript-Protokoll“. "
@@ -1038,6 +1044,7 @@ def script_properties():
     obs.obs_properties_add_text(p, "repo", "Pack-Quelle (GitHub owner/repo oder URL)", obs.OBS_TEXT_DEFAULT)
 
     obs.obs_properties_add_button(p, "login", "Mit Twitch verbinden", on_login)
+    obs.obs_properties_add_button(p, "portal", "Stream-Statistiken im Portal öffnen", ui_portal)
     obs.obs_properties_add_button(p, "logout", "Abmelden", on_logout)
     obs.obs_properties_add_int(p, "port", "Lokaler Port", 1024, 65535, 1)
 
