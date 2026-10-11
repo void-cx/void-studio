@@ -15,7 +15,7 @@ async def main():
                 fonts=await pg.evaluate("[...document.fonts].filter(f=>f.status==='loaded').map(f=>f.family+' '+f.weight)")
                 f=f'{P}/void-theme-{theme}/preview/{name}.png';await pg.screenshot(path=f)
                 Image.open(f).convert('RGB').resize((960,540),Image.LANCZOS).save(f.replace('.png','.jpg'),quality=85)
-                import os;os.remove(f)
+                os.remove(f)
             print(theme,'fonts geladen:',sorted(set(fonts)))
         print('fehlgeschlagene Requests (ohne Twitch-CDN):',[u for u in bad if 'jtvnw' not in u])
         await b.close()
