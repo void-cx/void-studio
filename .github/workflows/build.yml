@@ -1,0 +1,82 @@
+name: Build & Release
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths: ['build/**', 'studio/**', '.github/workflows/**']
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Release erzwingen, auch ohne geänderte Version'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Schnellprüfung
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: build } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - name: Abhängigkeiten
+        run: |
+          pip install playwright pillow numpy
+          python -m playwright install --with-deps chromium
+      - name: VOID Studio kompiliert
+        run: python -m py_compile ../studio/void-studio.py
+      - name: Packs bauen
+        run: |
+          for t in wd mc ets gta void; do python make_$t.py; done
+          python packs.py
+      - name: Alle Szenen im Browser prüfen
+        run: python smoke.py
+
+  release:
+    name: Voller Build und Release
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: build } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12', cache: pip }
+      - name: Abhängigkeiten
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          pip install playwright pillow numpy
+          python -m playwright install --with-deps chromium
+      - name: Release nötig?
+        id: need
+        env:
+          FORCE: ${{ inputs.force_release || 'false' }}
+        run: python ci_release_check.py
+      - name: Build (Packs, Übergänge, Vorschauen, index.json)
+        if: steps.need.outputs.release == 'true'
+        run: ./build.sh
+      - name: Veröffentlichen
+        if: steps.need.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(python -c "import json;print(json.load(open('versions.json'))['studio'])")
+          TAG="v$V-build${{ github.run_number }}"
+          gh release create "$TAG" dist/release/* --title "VOID Studio $V (Build ${{ github.run_number }})" \
+            --notes-file dist/release/CHANGELOG.md --latest
+      - name: Build-Ergebnis als Artefakt
+        if: steps.need.outputs.release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: build/dist/release/
+          retention-days: 14

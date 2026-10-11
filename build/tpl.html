@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<!--
+  VOID × AION 2 · OBS-Szenenset  (Browserquelle, 1920 × 1080, eigene Framerate 60)
+
+  In OBS als „Lokale Datei“ die passende Einstiegsdatei aus obs/ wählen (start.html, pause.html, …).
+  Die leitet auf scenes.html#scene=… weiter; Parameter wie &cam= trägst du dort ein.
+  Im Browser geht auch direkt: scenes.html?scene=start
+  Die Szene hört per EventSource auf die VOID Twitch Bridge (Standard http://127.0.0.1:8787/events).
+  Läuft die Bridge nicht, zeigt die Szene einfach keine Events und verbindet sich später selbst.
+
+  ?scene=start     Stream startet        &min=5   Countdown in Minuten (optional)
+  ?scene=pause     Kurze Pause
+  ?scene=end       Stream endet
+  ?scene=chat      Just Chatting         Overlay mit Aussparung: Kamera in OBS UNTER diese Quelle legen
+                                           Kamera-Loch: x 64  y 176  1248 × 702   ·  Chat kommt von der Bridge
+  ?scene=game      AION 2 Game           transparentes Overlay, Kamera UNTER diese Quelle legen
+                                           &cam=br|bl|tr|tl|off   (Standard br: x 1472  y 814  416 × 234)
+  ?scene=alerts    nur Alerts, transparent
+  ?scene=goals     nur Ziele, transparent (oben links)
+  ?scene=stinger   Vorschau des Szenenübergangs (in OBS die WebM aus assets/ nutzen)
+
+  Optional überall:
+    &title=Text     eigener Titel           &sub=A|B|C   eigene Statuszeilen
+    &alerts=0       keine Alerts in dieser Quelle      &goals=0  keine Ziele an der Game-Kamera
+    &chat=0         Just Chatting mit Loch für eine fremde Chat-Quelle statt eigenem Chat
+    &test=1         Beispiel-Alerts, -Chat, -Ziele und -Rückblick (zum Testen ohne Twitch)
+    &port=8787      Port der Bridge, falls geändert    &host=127.0.0.1  Bridge auf einem anderen Rechner
+    &bridge=0       nicht mit der Bridge verbinden
+    &demo=1         Platzhalter für Kamera/Chat/Game
+    &key=1          echte Runen vor dem Entschlüsseln – verrät die Zuordnung, erst nach dem Giveaway!
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOID × AION 2 · Szenen</title>
+<style>
+@font-face{font-family:"VOID Runes";src:url(data:font/woff2;base64,__RUNES__) format("woff2");font-display:block}
+@font-face{font-family:"VOID Latin";src:url(data:font/woff2;base64,__LATIN__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(data:font/woff2;base64,__SG4__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
+
+:root{
+  --night:#06081A;      /* Grund – nah am Void-Schwarz */
+  --deep:#0C1030;
+  --aether:#BFE6FF;     /* Runenlicht */
+  --sky:#7FC8FF;
+  --violet:#B303F8;     /* VOID-Violett */
+  --blue:#1141E4;       /* VOID-Blau */
+  --lilac:#D27BFF;
+  --silver:#EEF2FF;
+  --mist:#9AA6C8;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:"Space Grotesk",system-ui,sans-serif;color:var(--silver);-webkit-font-smoothing:antialiased}
+
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden}
+
+/* ---------- Atmosphäre ---------- */
+.sky{position:absolute;inset:0;
+  background:
+    radial-gradient(900px 700px at 8% 18%, rgba(179,3,248,.30), transparent 70%),
+    radial-gradient(1000px 760px at 94% 30%, rgba(80,170,255,.26), transparent 70%),
+    radial-gradient(1200px 520px at 50% 108%, rgba(17,65,228,.32), transparent 70%),
+    radial-gradient(700px 500px at 50% 46%, rgba(191,230,255,.10), transparent 70%),
+    linear-gradient(180deg,#080A22 0%,var(--night) 55%,#05061A 100%);}
+.beam{position:absolute;top:-200px;width:520px;height:1500px;opacity:.0;will-change:opacity;
+  background:linear-gradient(90deg,transparent,rgba(191,230,255,.07) 45%,rgba(191,230,255,.10) 50%,rgba(191,230,255,.07) 55%,transparent);
+  animation:beam 14s ease-in-out infinite}
+.beam.l{left:300px;transform:rotate(18deg)}
+.beam.r{right:300px;transform:rotate(-18deg);animation-delay:-7s;
+  background:linear-gradient(90deg,transparent,rgba(210,123,255,.06) 45%,rgba(210,123,255,.09) 50%,rgba(210,123,255,.06) 55%,transparent)}
+@keyframes beam{0%,100%{opacity:.25}50%{opacity:1}}
+
+.motes{position:absolute;inset:0}
+.mote{position:absolute;border-radius:50%;will-change:transform,opacity;opacity:0;
+  background:radial-gradient(circle,#fff 0,var(--aether) 35%,rgba(127,200,255,0) 70%);
+  animation:rise linear infinite}
+.mote.v{background:radial-gradient(circle,#fff 0,var(--lilac) 35%,rgba(179,3,248,0) 70%)}
+@keyframes rise{
+  0%{transform:translate3d(0,0,0);opacity:0}
+  15%{opacity:var(--o)}
+  85%{opacity:var(--o)}
+  100%{transform:translate3d(var(--dx),-340px,0);opacity:0}}
+
+/* ---------- Runenkranz ---------- */
+.halo{position:absolute;left:50%;top:50%;width:1000px;height:1000px;margin:-500px 0 0 -500px;pointer-events:none}
+.halo svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.halo .spin{animation:spin 160s linear infinite;will-change:transform}
+.halo .spin.rev{animation-duration:220s;animation-direction:reverse}
+@keyframes spin{to{transform:rotate(360deg)}}
+.halo text{font-family:"VOID Runes";fill:var(--aether)}
+
+/* ---------- Schwingen ---------- */
+.wings{position:absolute;left:50%;top:330px;opacity:.85;transform:scale(.92);width:0;height:0}
+.wing{position:absolute;left:0;top:0;overflow:visible;will-change:transform}
+.wing.l{animation:flapL 9s ease-in-out infinite}
+.wing.r{animation:flapR 9s ease-in-out infinite}
+@keyframes flapL{0%,100%{transform:rotate(0deg)}50%{transform:rotate(-2.6deg) translateY(-6px)}}
+@keyframes flapR{0%,100%{transform:scaleX(-1) rotate(0deg)}50%{transform:scaleX(-1) rotate(-2.6deg) translateY(-6px)}}
+
+/* ---------- Chiffre (Runen → Latein) ---------- */
+.cipher{white-space:pre;display:inline-block;line-height:1}
+.ch{position:relative;display:inline-block}
+.ch .lt{opacity:0;display:inline-block}
+.ch .rn{position:absolute;left:50%;top:0;transform:translateX(-50%);font-family:"VOID Runes";font-weight:400;
+  color:var(--aether);text-shadow:0 0 .18em rgba(110,190,255,.9),0 0 .5em rgba(80,160,255,.45);
+  font-size:1em;line-height:1;top:.025em;letter-spacing:0;transition:opacity .25s}
+.ch.flick .rn{color:#fff}
+.ch.v .rn{color:#E6C4FF;text-shadow:0 0 .18em rgba(200,110,255,.9),0 0 .5em rgba(179,3,248,.45)}
+.ch.on .rn{opacity:0}
+.ch.on .lt{animation:lock .7s cubic-bezier(.2,.7,.2,1) forwards}
+.ch.off .lt{animation:unlock .25s ease-in forwards}
+@keyframes lock{0%{opacity:0;transform:translateY(.12em) scale(.96);color:#fff}
+  40%{opacity:1;color:#fff}100%{opacity:1;transform:none;color:inherit}}
+@keyframes unlock{from{opacity:1}to{opacity:0;transform:translateY(-.08em)}}
+.cipher.fade{transition:opacity .3s}
+.cipher.hide{opacity:0}
+
+/* ---------- Vollbild-Szenen ---------- */
+.center{position:absolute;left:0;right:0;top:0;bottom:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.mark{width:92px;height:auto;margin-bottom:34px;opacity:0;animation:appear 1.2s .2s ease-out forwards}
+@keyframes appear{to{opacity:1}}
+.title{font-family:"VOID Latin",sans-serif;font-size:124px;line-height:1;letter-spacing:.09em;color:#E6F5FF;
+  text-shadow:0 0 .1em rgba(110,190,255,.55),0 0 .4em rgba(80,160,255,.28)}
+.rule{display:flex;align-items:center;gap:18px;margin:34px 0 28px;opacity:0;animation:appear 1s 1.4s ease-out forwards}
+.rule i{display:block;width:220px;height:1px;background:linear-gradient(90deg,transparent,rgba(191,230,255,.7))}
+.rule i+b+i{background:linear-gradient(90deg,rgba(210,123,255,.7),transparent)}
+.rule b{width:10px;height:10px;transform:rotate(45deg);border:1px solid var(--aether);box-shadow:0 0 10px rgba(127,200,255,.6)}
+.status{font-family:"VOID Latin",sans-serif;font-size:32px;line-height:1;letter-spacing:.12em;color:#CFE3FF;min-height:40px;
+  text-shadow:0 0 .15em rgba(110,190,255,.45)}
+.count{margin-top:22px;font-family:"Space Grotesk";font-weight:500;font-size:22px;color:var(--mist);letter-spacing:.02em;font-variant-numeric:tabular-nums;min-height:30px}
+.count b{color:var(--aether);font-weight:500}
+
+.foot{position:absolute;left:96px;right:96px;bottom:64px;display:flex;justify-content:space-between;align-items:center;
+  font-size:22px;color:var(--mist);opacity:0;animation:appear 1s 2s ease-out forwards}
+.foot .pair{display:flex;align-items:center;gap:16px}
+.foot .x{color:var(--lilac)}
+.foot .aion{font-family:"VOID Latin";letter-spacing:.12em;color:var(--silver)}
+.foot .dom{font-family:"Space Grotesk";font-weight:500;color:var(--aether)}
+.live{display:inline-flex;align-items:center;gap:10px}
+.live:before{content:"";width:9px;height:9px;border-radius:50%;background:var(--sky);box-shadow:0 0 10px var(--sky);animation:pulse 1.8s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* ---------- Rahmen (Chat / Game) ---------- */
+.matte{position:absolute;inset:0}
+.frame{position:absolute;inset:0;pointer-events:none;overflow:visible}
+.demo{position:absolute;display:flex;align-items:center;justify-content:center;color:#6f7aa3;font-size:22px;
+  background:repeating-linear-gradient(135deg,#1a1f3d 0 18px,#151a35 18px 36px)}
+
+/* Chat */
+.head{position:absolute;left:64px;right:64px;top:64px;height:80px;display:flex;align-items:center;justify-content:space-between}
+.head .title{font-size:58px;letter-spacing:.1em}
+.head img{height:58px;width:auto}
+.ticker{position:absolute;left:64px;right:64px;top:926px;height:90px;display:flex;align-items:center;justify-content:space-between}
+.ticker .status{font-size:30px}
+.ticker .right{font-size:22px;color:var(--mist);display:flex;gap:16px;align-items:center}
+
+/* Game */
+.plate{position:absolute;height:44px;clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% 100%,0 100%,0 14px);display:flex;align-items:center;gap:14px;padding:0 18px;
+  background:linear-gradient(90deg,rgba(6,8,26,.92),rgba(12,16,48,.86));font-size:18px;color:var(--mist)}
+.plate .title{font-size:22px;letter-spacing:.14em}
+.plate img{height:22px;width:auto}
+
+/* ---------- Alerts (Twitch-Events) ---------- */
+.alerts{position:absolute;left:0;right:0;top:44px;display:flex;justify-content:center;pointer-events:none;z-index:50}
+.alert{--c:22px;padding:1.5px;opacity:0;transform:translateY(-28px);will-change:transform,opacity;
+  transition:opacity .45s ease-out,transform .7s cubic-bezier(.2,.8,.2,1);
+  background:linear-gradient(135deg,#D27BFF,rgba(191,230,255,.55) 50%,#5A8CFF);
+  clip-path:polygon(var(--c) 0,calc(100% - var(--c)) 0,100% var(--c),100% calc(100% - var(--c)),calc(100% - var(--c)) 100%,var(--c) 100%,0 calc(100% - var(--c)),0 var(--c))}
+.alert.in{opacity:1;transform:none}
+.alert .body{min-width:640px;max-width:1040px;padding:24px 64px 28px;text-align:center;
+  background:radial-gradient(120% 140% at 50% 0%,rgba(80,150,255,.16),transparent 60%),linear-gradient(180deg,#0B0F2E,#06081A);
+  clip-path:polygon(calc(var(--c) - .6px) 0,calc(100% - var(--c) + .6px) 0,100% calc(var(--c) - .6px),100% calc(100% - var(--c) + .6px),calc(100% - var(--c) + .6px) 100%,calc(var(--c) - .6px) 100%,0 calc(100% - var(--c) + .6px),0 calc(var(--c) - .6px))}
+.a-kind{font-size:18px;color:var(--mist);letter-spacing:.04em;margin-bottom:14px}
+.a-name{font-family:"VOID Latin";font-size:60px;letter-spacing:.09em;color:#E6F5FF;text-shadow:0 0 .1em rgba(110,190,255,.55),0 0 .4em rgba(80,160,255,.28)}
+.a-detail{font-family:"VOID Latin";font-size:26px;letter-spacing:.14em;color:var(--aether);margin-top:16px;opacity:0;transition:opacity .5s}
+.a-msg{font-size:20px;line-height:1.45;color:#CFD6F0;max-width:820px;margin:12px auto 0;opacity:0;transition:opacity .5s;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.alert.done .a-detail,.alert.done .a-msg{opacity:1}
+
+/* ---------- Ziele ---------- */
+.goals{display:flex;gap:10px;pointer-events:none}
+.goals.empty{display:none}
+.goals.stack{position:absolute;flex-direction:column}
+.goals.row{flex-direction:row;gap:32px}
+.goals.row .goal{width:220px;padding:0;background:none;clip-path:none}
+.hud-stack{position:absolute;display:flex;flex-direction:column;gap:10px;pointer-events:none}
+.hud-stack .goals{flex-direction:column;gap:10px}
+.goal.lt .g-top{margin:0}
+.goal.lt .g-v{max-width:62%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.goals:not(.empty)+.brand{display:none}
+.brand{display:flex;gap:16px;align-items:center}
+.goal{--p:0;padding:9px 14px 11px;background:linear-gradient(90deg,rgba(6,8,26,.9),rgba(12,16,48,.82));
+  clip-path:polygon(8px 0,calc(100% - 8px) 0,100% 8px,100% 100%,0 100%,0 8px)}
+.g-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:9px}
+.g-l{font-size:15px;color:var(--mist)}
+.g-v{font-family:"VOID Latin";font-size:15px;letter-spacing:.1em;color:var(--aether);font-variant-numeric:tabular-nums}
+.g-track{position:relative;height:4px;background:rgba(191,230,255,.13)}
+.g-fill{position:absolute;inset:0;transform-origin:0 50%;transform:scaleX(var(--p));will-change:transform;
+  background:linear-gradient(90deg,#B303F8,#7FC8FF);transition:transform 1.4s cubic-bezier(.2,.8,.2,1)}
+.g-head{position:absolute;top:50%;left:calc(var(--p) * 100%);width:10px;height:10px;margin:-5px 0 0 -5px;transform:rotate(45deg);
+  background:#06081A;border:1.5px solid #BFE6FF;box-shadow:0 0 10px rgba(127,200,255,.8);transition:left 1.4s cubic-bezier(.2,.8,.2,1)}
+.goal.full .g-l{color:var(--aether)}
+.goal.full .g-fill{background:linear-gradient(90deg,#B303F8,#E6F5FF)}
+
+/* ---------- Eigener Chat ---------- */
+.chatpanel{position:absolute;padding:18px 24px;background:linear-gradient(180deg,rgba(6,8,26,.8),rgba(8,10,34,.92));
+  clip-path:polygon(14px 0,calc(100% - 14px) 0,100% 14px,100% calc(100% - 14px),calc(100% - 14px) 100%,14px 100%,0 calc(100% - 14px),0 14px)}
+.chatlog{height:100%;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 110px);mask-image:linear-gradient(180deg,transparent 0,#000 110px)}
+.msg{flex-shrink:0;padding:11px 0 13px;border-bottom:1px solid rgba(191,230,255,.07);animation:msgin .5s cubic-bezier(.2,.8,.2,1)}
+.msg:last-child{border-bottom:0}
+.msg.gone{display:none}
+@keyframes msgin{from{opacity:0;transform:translateY(16px)}}
+.m-head{display:flex;align-items:center;gap:7px;margin-bottom:6px}
+.m-badge{width:18px;height:18px}
+.m-name{font-family:"VOID Latin";font-size:17px;letter-spacing:.1em}
+.m-text{font-size:19px;line-height:1.45;color:#E3E8F7;overflow-wrap:anywhere}
+.m-emote{height:28px;vertical-align:-7px;margin:0 2px}
+
+/* ---------- Animierte Bildmarke (Kern) ---------- */
+.vmark{position:relative;display:block;--d:0ms;--t:700ms}
+.vmark svg{position:relative;display:block;width:100%;height:auto;overflow:visible}
+.vmark .glow{position:absolute;left:-70%;top:-70%;width:240%;height:240%;border-radius:50%;opacity:0;will-change:transform,opacity;
+  background:radial-gradient(circle,rgba(179,3,248,.55) 0,rgba(17,65,228,.28) 30%,transparent 62%)}
+.vmark path{transform-box:fill-box;transform-origin:center}
+.vmark.play .seg-t{animation:vmT var(--t) cubic-bezier(.2,.9,.2,1) var(--d) both}
+.vmark.play .seg-l{animation:vmL var(--t) cubic-bezier(.2,.9,.2,1) calc(var(--d) + var(--t)*.12) both}
+.vmark.play .seg-r{animation:vmR var(--t) cubic-bezier(.2,.9,.2,1) calc(var(--d) + var(--t)*.24) both}
+.vmark.play .wing{animation:vmW var(--t) cubic-bezier(.2,.9,.2,1) calc(var(--d) + var(--t)*.5) both}
+.vmark.play .tri{animation:vmTri var(--t) cubic-bezier(.2,.9,.25,1.15) calc(var(--d) + var(--t)*.85) both}
+.vmark.play .glow{animation:vmGlow calc(var(--t)*1.4) ease-out calc(var(--d) + var(--t)*1.25) both}
+@keyframes vmT{from{opacity:0;transform:translateY(-70%) rotate(-30deg)}}
+@keyframes vmL{from{opacity:0;transform:translateX(-80%) rotate(-50deg)}}
+@keyframes vmR{from{opacity:0;transform:translateX(80%) rotate(50deg)}}
+@keyframes vmW{from{opacity:0;transform:translateY(-40%) scale(.8)}}
+@keyframes vmTri{from{opacity:0;transform:scale(.15) rotate(180deg)}}
+@keyframes vmGlow{0%{opacity:0;transform:scale(.5)}30%{opacity:1}100%{opacity:0;transform:scale(1.25)}}
+.vmark.mark{opacity:1;animation:none}
+
+/* ---------- Stinger (Szenenübergang) ---------- */
+#stg{position:absolute;inset:0;overflow:hidden}
+.st-mark{position:absolute;left:50%;top:50%;width:260px;margin:-128px 0 0 -130px;animation:stMark 1.95s linear both}
+@keyframes stMark{0%,74%{opacity:1}82%,100%{opacity:0}}
+/* STINGER-CSS-START */
+/* AION 2: Aether-Portal öffnet sich, Federn brechen aus, Runenkranz + Schwingen um die Bildmarke, Teleport-Blitz */
+.ai-cover{position:absolute;inset:0;animation:aiOut 1.95s both}
+@keyframes aiOut{0%,74%{opacity:1;transform:none;animation-timing-function:cubic-bezier(.55,0,.35,1)}100%{opacity:0;transform:scale(1.55)}}
+.ai-disk{position:absolute;left:50%;top:50%;width:2400px;height:2400px;margin:-1200px 0 0 -1200px;border-radius:50%;overflow:hidden;
+  background:radial-gradient(circle,#24387a 0%,#111a4a 24%,#0a0f30 46%,#07071A 70%);animation:aiDisk 1.95s both}
+.ai-disk .sky{left:240px;top:660px;width:1920px;height:1080px;right:auto;bottom:auto;opacity:.9;
+  -webkit-mask-image:radial-gradient(ellipse 55% 60% at 50% 50%,#000 35%,transparent 100%);mask-image:radial-gradient(ellipse 55% 60% at 50% 50%,#000 35%,transparent 100%)}
+@keyframes aiDisk{0%{transform:scale(0);animation-timing-function:cubic-bezier(.45,0,.15,1)}25%,100%{transform:scale(1)}}
+.ai-ring{position:absolute;left:50%;top:50%;width:420px;height:420px;margin:-210px 0 0 -210px;border-radius:50%;
+  border:3px solid rgba(214,238,255,.95);box-shadow:0 0 30px rgba(127,200,255,.9),inset 0 0 30px rgba(127,200,255,.6);animation:aiRing 1.95s both}
+@keyframes aiRing{0%,3%{opacity:0;transform:scale(.1)}8%{opacity:1}34%,100%{opacity:0;transform:scale(5.5)}}
+.ai-f{position:absolute;left:50%;top:50%;width:150px;height:30px;margin:-15px 0 0 0;transform-origin:0 50%;opacity:0;animation:aiF 1.95s both}
+@keyframes aiF{0%{opacity:0;transform:rotate(var(--a)) translateX(30px) scale(.2)}6%{opacity:1}
+  42%{opacity:0;transform:rotate(calc(var(--a) + var(--s))) translateX(var(--dist)) scale(1)}100%{opacity:0}}
+.ai-halo{position:absolute;inset:0;animation:aiHalo 1.95s both}
+@keyframes aiHalo{0%,18%{opacity:0;transform:scale(.55) rotate(-30deg)}36%{opacity:1;transform:scale(1) rotate(0)}100%{opacity:1;transform:rotate(22deg)}}
+.ai-wings{position:absolute;inset:0;animation:aiWings 1.95s both}
+.ai-wings .wings{top:470px}
+@keyframes aiWings{0%,24%{opacity:0;transform:translateY(60px) scale(.55)}44%,100%{opacity:1;transform:none}}
+.ai-flash{position:absolute;inset:0;opacity:0;background:radial-gradient(circle,rgba(240,250,255,.95) 0,rgba(191,230,255,.7) 30%,rgba(127,200,255,.25) 60%,transparent 80%);
+  animation:aiFlash 1.95s both}
+@keyframes aiFlash{0%,20%{opacity:0}26%{opacity:.35}36%{opacity:0}72%{opacity:0}77%{opacity:.9}92%,100%{opacity:0}}
+/* STINGER-CSS-END */
+
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01s!important;animation-iteration-count:1!important}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+
+<script>
+const MARK  = "data:image/svg+xml;base64,__MARK__";
+const LOCKUP= "data:image/svg+xml;base64,__LOCKUP__";
+
+/* Parameter aus ?query und #hash (OBS „Lokale Datei“ erlaubt keine Query, die Einstiegsdateien in obs/ nutzen #) */
+const P = new URLSearchParams(location.search.slice(1)+'&'+location.hash.slice(1));
+const SCENE = (P.get('scene')||'start').toLowerCase();
+const DEMO = P.get('demo')==='1';
+const stage = document.getElementById('stage');
+
+/* Vorschau im Browser auf Fenstergröße skalieren (in OBS 1:1) */
+function fit(){const s=Math.min(innerWidth/1920,innerHeight/1080);stage.style.transform=`scale(${s})`}
+addEventListener('resize',fit);fit();
+
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const el=(tag,cls,html)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(html!=null)e.innerHTML=html;return e};
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+
+/* =========================================================
+   Chiffre: Text erscheint zuerst als Runen (standardmäßig zufällige,
+   damit der Stream die Zuordnung nicht verrät), mischt sich durch und
+   rastet Buchstabe für Buchstabe in VOID Latin ein.
+   ========================================================= */
+const POOL='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+/* &key=1 zeigt vor dem Entschlüsseln die ECHTEN Runen – verrät die Zuordnung, erst nach dem Giveaway nutzen */
+const KEY=P.get('key')==='1';
+/* Text-Animation des Themes: 'cipher' (Zeichen mischen sich ins Latein, AION/Minecraft) oder ein eigener Name,
+   dessen CSS das Theme mit .fx / .fx.in / .fx.out definiert (z. B. 'wipe', 'slide') */
+const FX='cipher', FXDUR=650;
+const RUNESET=new Set([...POOL,...'ÄÖÜß.,-!?:–']);
+const rr=()=>POOL[Math.random()*POOL.length|0];
+const glyph=c=>KEY&&RUNESET.has(c.toUpperCase())?c:rr();
+class Cipher{
+  constructor(node,o={}){this.n=node;this.n.classList.add('cipher','fade');
+    this.o=Object.assign({stagger:70,shuffle:520,jitter:160,tick:55},o);this.cells=[]}
+  build(text){
+    this.text=text;this.n.innerHTML='';this.cells=[];
+    if(FX!=='cipher'){const s=el('span','fx '+FX);s.textContent=text;s.style.setProperty('--n',Math.max(1,[...text].length));this.n.appendChild(s);this.fx=s;if(text)this.cells=[s];return}
+    [...text].forEach((c,i)=>{
+      if(c===' '){this.n.appendChild(document.createTextNode(' '));return}
+      const s=el('span','ch');const lt=el('span','lt');lt.textContent=c;
+      const rn=el('span','rn');rn.textContent=glyph(c);
+      if(i%2)s.classList.add('v');
+      s.append(lt,rn);this.n.appendChild(s);this.cells.push({s,rn,c});
+    });
+  }
+  /* zufällige Reihenfolge, grob von links nach rechts */
+  order(){return this.cells.map((x,i)=>({x,t:i*this.o.stagger+Math.random()*this.o.jitter})).sort((a,b)=>a.t-b.t)}
+  flicker(cell,ms,settle){
+    return new Promise(res=>{
+      cell.s.classList.add('flick');
+      const iv=setInterval(()=>{cell.rn.textContent=POOL[Math.random()*POOL.length|0]},this.o.tick);
+      setTimeout(()=>{clearInterval(iv);cell.s.classList.remove('flick');cell.rn.textContent=glyph(cell.c);settle();res()},ms);
+    });
+  }
+  reveal(){
+    if(FX!=='cipher'){if(!this.fx)return Promise.resolve();this.fx.classList.remove('out');void this.fx.offsetWidth;this.fx.classList.add('in');return wait(FXDUR)}
+    return Promise.all(this.order().map(({x,t})=>wait(t).then(()=>this.flicker(x,this.o.shuffle,()=>{x.s.classList.remove('off');x.s.classList.add('on')}))));
+  }
+  conceal(){
+    if(FX!=='cipher'){if(!this.fx)return Promise.resolve();this.fx.classList.remove('in');this.fx.classList.add('out');return wait(FXDUR*.5)}
+    return Promise.all(this.order().map(({x,t})=>wait(t*.6).then(()=>{x.s.classList.remove('on');x.s.classList.add('off');
+      return this.flicker(x,this.o.shuffle*.7,()=>{})})));
+  }
+  async show(text,hold=900){
+    if(FX!=='cipher')hold=Math.min(hold,250);            /* neuer Text: Runen einblenden → halten → entschlüsseln */
+    if(this.cells.length){await this.conceal();await wait(250);this.n.classList.add('hide');await wait(320)}
+    this.n.classList.add('hide');this.build(text);
+    await wait(30);this.n.classList.remove('hide');await wait(hold);await this.reveal();
+  }
+  async replay(hold=1400){await this.conceal();await wait(hold);await this.reveal()}
+}
+
+/* ---------- Bausteine ---------- */
+function sky(target){
+  const w=el('div','');w.style.cssText='position:absolute;inset:0';
+  w.append(el('div','sky'),el('div','beam l'),el('div','beam r'));
+  const m=el('div','motes');
+  for(let i=0;i<46;i++){
+    const d=el('div','mote'+(Math.random()<.35?' v':''));const s=rnd(3,8);
+    d.style.cssText=`left:${rnd(0,1920)}px;top:${rnd(200,1180)}px;width:${s}px;height:${s}px;--o:${rnd(.35,.9).toFixed(2)};--dx:${rnd(-60,60)|0}px;animation-duration:${rnd(9,18).toFixed(1)}s;animation-delay:-${rnd(0,18).toFixed(1)}s`;
+    m.appendChild(d)}
+  w.appendChild(m);target.appendChild(w);return w;
+}
+
+function halo(target,{r=440,size=26,op=.38}={}){
+  const h=el('div','halo');
+  const txt='ENTER THE VOID – AION 2 – SEIT 2016 – BUILDING COMMUNITY BEYOND THE ORDINARY – ';
+  h.innerHTML=`<svg viewBox="-500 -500 1000 1000">
+    <defs><path id="hr" d="M0,-${r} a${r},${r} 0 1,1 0,${2*r} a${r},${r} 0 1,1 0,-${2*r}"/></defs>
+    <circle r="${r-28}" fill="none" stroke="rgba(191,230,255,.16)" stroke-width="1"/>
+    <circle r="${r+24}" fill="none" stroke="rgba(210,123,255,.14)" stroke-width="1"/>
+    <g class="spin" style="opacity:${op}"><text font-size="${size}" letter-spacing="6"><textPath href="#hr">${txt.repeat(2)}</textPath></text></g>
+    <g class="spin rev"><circle r="${r-52}" fill="none" stroke="rgba(191,230,255,.22)" stroke-width="1.2" stroke-dasharray="2 14"/></g>
+  </svg>`;
+  target.appendChild(h);return h;
+}
+
+/* Lichtschwingen aus gefächerten Federn – links Violett, rechts Aether-Blau */
+function wings(target){
+  const box=el('div','wings');
+  const mk=(side)=>{
+    const ns='http://www.w3.org/2000/svg';
+    const c1=side==='l'?'#E2A6FF':'#D6EEFF',c2=side==='l'?'#B303F8':'#3D7BFF';
+    const arm=u=>[-70-470*u,-10-250*u+120*u*u];
+    const feather=(rx,ry,deg,L,w,op)=>{
+      const a=deg*Math.PI/180,dx=Math.cos(a),dy=-Math.sin(a),nx=-dy,ny=dx;
+      const ex=rx+dx*L,ey=ry+dy*L, bx=rx+dx*L*.55,by=ry+dy*L*.55, s=L*.06;
+      const p=`M${rx},${ry} C${bx+nx*(w+s)},${by+ny*(w+s)} ${ex+nx*w*.5},${ey+ny*w*.5} ${ex},${ey} C${ex-nx*w*.35},${ey-ny*w*.35} ${bx-nx*(w*.6-s)},${by-ny*(w*.6-s)} ${rx},${ry}Z`;
+      return `<path d="${p}" fill="url(#f${side})" stroke="${c1}" stroke-width="1" stroke-opacity="${(op*.9).toFixed(2)}" opacity="${op.toFixed(2)}"/>`
+        +`<path d="M${rx},${ry} Q${bx+nx*s},${by+ny*s} ${ex},${ey}" fill="none" stroke="${c1}" stroke-width=".8" opacity="${(op*.8).toFixed(2)}"/>`;
+    };
+    let p='';
+    const N=15;                                   /* Schwungfedern */
+    for(let k=0;k<N;k++){const u=k/(N-1);const [rx,ry]=arm(u*.92);
+      p+=feather(rx,ry,252-100*u,170+430*Math.pow(u,1.25),14+16*u,.30+.35*u)}
+    const M=11;                                   /* Deckfedern */
+    for(let k=0;k<M;k++){const u=k/(M-1);const [rx,ry]=arm(u*.8);
+      p+=feather(rx,ry+6,238-92*u,90+170*u,12+8*u,.55)}
+    const svg=document.createElementNS(ns,'svg');svg.setAttribute('class','wing '+side);
+    svg.setAttribute('width','1');svg.setAttribute('height','1');
+    svg.innerHTML=`<defs><linearGradient id="f${side}" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${c1}" stop-opacity=".55"/><stop offset=".55" stop-color="${c2}" stop-opacity=".35"/>
+      <stop offset="1" stop-color="${c2}" stop-opacity=".05"/></linearGradient></defs>${p}`;
+    return svg;
+  };
+  box.append(mk('l'),mk('r'));target.appendChild(box);return box;
+}
+
+/* ---------- Animierte Bildmarke (Kern) ----------
+   Teile: drei Ringsegmente, V-Schwinge, Dreieck. Baut sich auf und endet im sauberen Zeichen. */
+const MARKPARTS={"defs": "<linearGradient id=\"g1\" x1=\"489.4\" y1=\"175.54\" x2=\"1047.5\" y2=\"733.65\" gradientUnits=\"userSpaceOnUse\"><stop offset=\"0\" stop-color=\"#b303f8\"/><stop offset=\"1\" stop-color=\"#1141e4\"/></linearGradient><linearGradient id=\"g2\" x1=\"411.53\" y1=\"66.17\" x2=\"1339.31\" y2=\"993.94\" gradientUnits=\"userSpaceOnUse\"><stop offset=\"0\" stop-color=\"#b303f8\"/><stop offset=\"1\" stop-color=\"#1141e4\"/></linearGradient><linearGradient id=\"g3\" x1=\"167.42\" y1=\"154.17\" x2=\"1129.31\" y2=\"1116.05\" gradientUnits=\"userSpaceOnUse\"><stop offset=\"0\" stop-color=\"#b303f8\"/><stop offset=\"1\" stop-color=\"#1141e4\"/></linearGradient><linearGradient id=\"tw\" x1=\"182\" y1=\"0\" x2=\"748\" y2=\"0\" gradientUnits=\"userSpaceOnUse\"><stop offset=\"0\" stop-color=\"#2741e5\"/><stop offset=\"1\" stop-color=\"#b303f8\"/></linearGradient>", "tri": "m280.3,228.09l408.95,707.27,412.68-707.27H280.3Zm407.08,507.23l-219.39-396.6h441.26l-221.88,396.6Z", "wing": "m1357.98,83.9s-41.95,104.41-670.29,1187.13C59.35,188.31,14.29,88.87,14.29,88.87c0,0,77.07,94.47,185.21,130.51l488.19,847.9,483.84-847.9s60.91-3.73,186.45-135.49Z", "r": "m1321.81,411.2c-12.12-28.03-26.07-55.05-41.78-80.99l-43.62,67.17c43.92,82.82,68.74,176.79,68.74,276.33,0,316.26-250.59,576.4-567.99,600.95l-38.87,72.68c89.14-1.27,175.64-19.01,257.26-52.78,81.9-33.88,155.47-82.4,218.66-144.2,63.23-61.85,112.89-133.9,147.59-214.14,35.96-83.16,54.19-171.47,54.19-262.51s-18.23-179.35-54.19-262.51Z", "l": "M70.85,673.71c0-98.01,24.06-190.63,66.74-272.52l-40.51-72.78c-16.17,26.49-30.48,54.11-42.88,82.78C18.23,494.35,0,582.67,0,673.71s18.23,179.35,54.19,262.51c34.7,80.25,84.36,152.29,147.59,214.14,63.18,61.8,136.74,110.32,218.66,144.2,79.5,32.89,163.63,50.58,250.3,52.64l-31.17-72.48c-317.75-24.2-568.72-284.52-568.72-601.01Z", "t": "M955.56,52.85C870.78,17.79,780.77,0,688,0s-182.78,17.79-267.56,52.85c-70.37,29.11-134.58,69.01-191.32,118.88h117.46c97.84-63.72,215.26-100.88,341.41-100.88s243.58,37.17,341.41,100.88h117.46c-56.76-49.87-120.97-89.77-191.32-118.88Z"};
+let markSeq=0;
+function makeMark({cls='',d=0,t=700}={}){
+  const n=++markSeq, w=el('div','vmark play '+cls);
+  w.style.setProperty('--d',d+'ms');w.style.setProperty('--t',t+'ms');
+  const defs=MARKPARTS.defs.replace(/id="(g\d)"/g,`id="$1m${n}"`);
+  const p=(c,g,d)=>`<path class="${c}" fill="url(#${g}m${n})" d="${d}"/>`;
+  w.innerHTML=`<i class="glow"></i><svg viewBox="0 0 1372 1348" aria-label="VOID">${'<defs>'+defs+'</defs>'}
+    ${p('seg-t','g3',MARKPARTS.t)}${p('seg-l','g3',MARKPARTS.l)}${p('seg-r','g3',MARKPARTS.r)}
+    ${p('wing','g2',MARKPARTS.wing)}${p('tri','g1',MARKPARTS.tri)}</svg>`;
+  return w;
+}
+
+/* ---------- Stinger: ?scene=stinger (Vorschau in Schleife) · &render=1 für die WebM-Aufnahme ---------- */
+function stinger(){
+  const build=()=>{stage.innerHTML='';const r=el('div','');r.id='stg';stage.appendChild(r);
+    stingerTheme(r);const m=makeMark({cls:'st-mark',d:480,t:450});r.appendChild(m);stingerMark(m,r)};
+  build();
+  if(P.get('render')!=='1')setInterval(build,2600);
+}
+
+/* STINGER-THEME-START */
+/* AION 2: Aether-Portal öffnet sich aus der Mitte, Federn brechen aus, Runenkranz und Lichtschwingen
+   entfalten sich um die Bildmarke, raus geht es mit einem Teleport-Blitz */
+function stingerTheme(root){
+  const cover=el('div','ai-cover');
+  const disk=el('div','ai-disk');disk.appendChild(el('div','sky'));cover.appendChild(disk);
+  const hw=el('div','ai-halo');halo(hw,{r:430,size:26,op:.55});cover.appendChild(hw);
+  const ww=el('div','ai-wings');wings(ww);cover.appendChild(ww);
+  root.appendChild(cover);
+  root.appendChild(el('div','ai-ring'));
+  for(let i=0;i<40;i++){                       /* Federn fliegen sternförmig aus dem Portal */
+    const f=el('div','ai-f'),v=i%2,a=i*9+(i*37%7);
+    f.style.cssText=`--a:${a}deg;--s:${(i%5-2)*6}deg;--dist:${700+(i*53%5)*120}px;animation-delay:${(i%6)*12}ms`;
+    f.innerHTML=`<svg viewBox="0 0 150 30" width="150" height="30"><path d="M0,15 C40,2 100,4 150,15 C100,26 40,28 0,15Z"
+      fill="${v?'rgba(214,238,255,.85)':'rgba(210,123,255,.8)'}" stroke="${v?'#fff':'#E2A6FF'}" stroke-width=".8"/>
+      <path d="M2,15 L148,15" stroke="rgba(255,255,255,.7)" stroke-width=".8"/></svg>`;
+    root.appendChild(f);
+  }
+  root.appendChild(el('div','ai-flash'));
+}
+function stingerMark(m,root){m.style.zIndex=5}
+/* STINGER-THEME-END */
+
+/* Achteck-Loch mit abgeschrägten Ecken als clip-path (evenodd) */
+function oct(x,y,w,h,c){return [[x+c,y],[x+w-c,y],[x+w,y+c],[x+w,y+h-c],[x+w-c,y+h],[x+c,y+h],[x,y+h-c],[x,y+c],[x+c,y]]}
+function holes(W,H,list){
+  let pts=[[0,0],[W,0],[W,H],[0,H],[0,0]];
+  list.forEach(r=>{pts=pts.concat(oct(r.x,r.y,r.w,r.h,r.c||14),[[0,0]])});
+  return `polygon(evenodd, ${pts.map(p=>p[0]+'px '+p[1]+'px').join(',')})`;
+}
+/* Zierrahmen um ein Loch */
+function ornament(r,{pad=8,c=20}={}){
+  const x=r.x-pad,y=r.y-pad,w=r.w+pad*2,h=r.h+pad*2;
+  const o=oct(x,y,w,h,c).map(p=>p.join(',')).join(' ');
+  const i=oct(r.x,r.y,r.w,r.h,r.c||14).map(p=>p.join(',')).join(' ');
+  const cx=x+w/2, d=7;
+  const dia=(px,py)=>`<path d="M${px},${py-d} L${px+d},${py} L${px},${py+d} L${px-d},${py}Z" fill="#06081A" stroke="#BFE6FF" stroke-width="1.4"/>`;
+  return `
+   <polygon points="${o}" fill="none" stroke="url(#edge)" stroke-width="1.6"/>
+   <polygon points="${i}" fill="none" stroke="rgba(191,230,255,.35)" stroke-width="1"/>
+   <path d="M${cx-90},${y} L${cx+90},${y}" stroke="#BFE6FF" stroke-width="2.4" opacity=".9"/>
+   <path d="M${cx-60},${y+h} L${cx+60},${y+h}" stroke="#D27BFF" stroke-width="2.4" opacity=".9"/>
+   ${dia(cx,y)}${dia(cx,y+h)}`;
+}
+function frameSVG(target,rects,opts){
+  const s=el('div','');s.innerHTML=`<svg class="frame" viewBox="0 0 1920 1080" width="1920" height="1080">
+   <defs><linearGradient id="edge" x1="0" y1="0" x2="1" y2="1">
+     <stop offset="0" stop-color="#D27BFF"/><stop offset=".5" stop-color="rgba(191,230,255,.55)"/><stop offset="1" stop-color="#5A8CFF"/></linearGradient></defs>
+   ${rects.map(r=>ornament(r,opts)).join('')}</svg>`;
+  target.appendChild(s.firstChild);
+}
+
+function subs(def){const s=P.get('sub');return s?s.split('|'):def}
+/* Statuszeilen im Wechsel; src darf eine Funktion sein (dann live aus dem Bridge-Zustand) */
+async function cycle(c,src,every=5200){
+  const get=()=>{const l=typeof src==='function'?src():src;return l&&l.length?l:['void.cx']};
+  let i=0;await c.show(get()[0],700);
+  for(;;){await wait(every);const l=get();i=(i+1)%l.length;await c.show(l[i],500)}}
+
+/* =========================================================
+   Szenen
+   ========================================================= */
+const SC={
+ start:{title:'Stream startet',subs:['Client wird gepatcht','Charakter wird gewählt','Aether wird gesammelt','Kaffee steht bereit','Gleich geht’s los']},
+ pause:{title:'Kurze Pause',subs:()=>['Bin gleich zurück','Chat bleibt offen',...latestLines(),'Kurz Aether tanken']},
+ end:{title:'Stream endet',subs:()=>{const r=recapLines();
+   return r.length?['Danke fürs Zuschauen',...r,'Bis zum nächsten Mal']:['Danke fürs Zuschauen','Bis zum nächsten Mal','Komm auf den Discord: void.cx']}},
+};
+
+function fullscreen(cfg){
+  sky(stage);halo(stage);wings(stage);
+  const c=el('div','center');
+  const m=makeMark({cls:'mark',d:250});
+  const t=el('div','title');const rule=el('div','rule','<i></i><b></b><i></i>');
+  const st=el('div','status');const ct=el('div','count');
+  c.append(m,t,rule,st,ct);stage.appendChild(c);
+  const f=el('div','foot',`<div class="pair"><span>Enter The Void</span><span class="x">×</span><span class="aion">AION 2</span></div>
+     <div class="pair">${SCENE==='end'?'<span class="dom">void.cx</span>':'<span class="live">'+(SCENE==='start'?'Gleich live':'Pause')+'</span><span class="dom">void.cx</span>'}</div>`);
+  stage.appendChild(f);
+
+  const T=new Cipher(t,{stagger:95,shuffle:700});
+  const S=new Cipher(st,{stagger:40,shuffle:360});
+  T.show(P.get('title')||cfg.title,1500).then(()=>{
+    cycle(S,P.get('sub')?subs():cfg.subs,SCENE==='end'?4800:5200);
+    setInterval(()=>T.replay(1600),40000);      /* Titel alle 40 s neu entschlüsseln */
+  });
+
+  const min=parseFloat(P.get('min'));
+  if(SCENE==='start'&&min>0){
+    const end=Date.now()+min*60000;
+    const tick=()=>{const s=Math.max(0,Math.round((end-Date.now())/1000));
+      ct.innerHTML=s>0?`Live in <b>${String(s/60|0).padStart(2,'0')}:${String(s%60).padStart(2,'0')}</b>`:'<b>Gleich live</b>'};
+    tick();setInterval(tick,250);
+  }
+}
+
+function chat(){
+  const cam={x:64,y:176,w:1248,h:702}, box={x:1360,y:176,w:496,h:702};
+  const OWN=P.get('chat')!=='0';                 /* &chat=0: Loch für eine fremde Chat-Quelle */
+  if(DEMO){(OWN?[[cam,'Kamera']]:[[cam,'Kamera'],[box,'Chat']]).forEach(([r,n])=>{const d=el('div','demo',n);
+    Object.assign(d.style,{left:r.x+'px',top:r.y+'px',width:r.w+'px',height:r.h+'px'});stage.appendChild(d)})}
+  const mat=el('div','matte');mat.style.clipPath=holes(1920,1080,OWN?[cam]:[cam,box]);
+  sky(mat);
+  stage.appendChild(mat);
+  if(OWN){const cp=el('div','chatpanel');Object.assign(cp.style,{left:box.x+'px',top:box.y+'px',width:box.w+'px',height:box.h+'px'});
+    chatLog=el('div','chatlog');cp.appendChild(chatLog);stage.appendChild(cp)}
+  frameSVG(stage,[cam,box]);
+  const hd=el('div','head');const t=el('div','title');const lg=el('img');lg.src=LOCKUP;lg.alt='Enter The Void';
+  hd.append(t,lg);stage.appendChild(hd);
+  const tk=el('div','ticker');const st=el('div','status');
+  const right=el('div','right');const gb=el('div','goals row empty');
+  right.append(gb,el('div','brand','<span>Enter The Void</span><span style="color:var(--lilac)">×</span><span style="font-family:\'VOID Latin\';letter-spacing:.12em;color:var(--silver)">AION 2</span>'));
+  tk.append(st,right);stage.appendChild(tk);goalsInto(gb);
+  const T=new Cipher(t,{stagger:80,shuffle:600});
+  T.show(P.get('title')||'Just Chatting',1200).then(()=>setInterval(()=>T.replay(1400),45000));
+  cycle(new Cipher(st,{stagger:40,shuffle:360}),P.get('sub')?subs():()=>['Frag ruhig im Chat','Discord und Server: void.cx',...latestLines()],9000);
+}
+
+function game(){
+  const pos=(P.get('cam')||'br').toLowerCase();
+  if(DEMO){const d=el('div','demo','Spielbild');d.style.cssText+='left:0;top:0;width:1920px;height:1080px;background:linear-gradient(160deg,#2a3b66,#121a33 60%,#2b1f4a)';stage.appendChild(d)}
+  if(pos==='off')return;
+  const W=416,H=234,M=24,PL=44;
+  const x=pos.includes('l')?M+8:1920-M-8-W, y=pos.includes('t')?M+8+PL+6:1080-M-8-H;
+  const cam={x,y,w:W,h:H,c:12};
+  if(DEMO){const d=el('div','demo','Kamera');Object.assign(d.style,{left:x+'px',top:y+'px',width:W+'px',height:H+'px'});stage.appendChild(d)}
+  /* schmaler Rahmen-Ring: verdeckt die Kameraecken */
+  const ring=el('div','matte');
+  const o=oct(x-8,y-8,W+16,H+16,18).concat([[x-8+18,y-8]]);
+  const inner=oct(x,y,W,H,12);
+  ring.style.clipPath=`polygon(evenodd, ${o.concat(inner).map(p=>p[0]+'px '+p[1]+'px').join(',')})`;
+  ring.style.background='linear-gradient(135deg,#1a0d3a,#06081A 50%,#0b1a4a)';
+  stage.appendChild(ring);
+  frameSVG(stage,[cam],{pad:8,c:18});
+  /* Namensplatte über/unter der Kamera */
+  const pl=el('div','plate');const pt=el('div','title');const mk=el('img');mk.src=MARK;mk.alt='';
+  pl.append(mk,pt);
+  pl.style.left=x+'px';pl.style.width=W+'px';pl.style.justifyContent='center';
+  pl.style.top=(pos.includes('t')?y-8-PL-6:y-8-PL-6)+'px';
+  stage.appendChild(pl);
+  if(P.get('goals')!=='0'){const gb=el('div','hud-stack');gb.style.left=x+'px';gb.style.width=W+'px';
+    if(pos.includes('t'))gb.style.top=(y+H+8+14)+'px';else gb.style.bottom=(1080-(y-8-PL-6)+12)+'px';
+    stage.appendChild(gb);const lb=el('div','goals lt-list empty'),g2=el('div','goals empty');gb.append(lb,g2);latestInto(lb);goalsInto(g2)}
+  cycle(new Cipher(pt,{stagger:60,shuffle:480}),subs([P.get('title')||'AION 2','Enter The Void','void.cx']),30000);
+}
+
+
+/* =========================================================
+   VOID Twitch Bridge: Alerts, Sounds, Steuerung, Chat, Ziele
+   Schnittstelle: Server-Sent Events unter /events, JSON pro Nachricht
+     {type:'follow'|'sub'|'resub'|'gift'|'cheer'|'raid'|'redeem', user, amount, months, tier, title, text, replay}
+     {type:'state', paused, volume, sounds, latest, session, goals}
+     {type:'chat', id, uid, user, color, badges, frags} · chat_delete · chat_delete_user · chat_clear
+     {type:'badges', map} · {type:'control', action:'skip'}
+   ========================================================= */
+const ALERTS=P.get('alerts')!=='0';
+const TEST=P.get('test')==='1';
+const alertBox=el('div','alerts');
+let STATE={paused:false,volume:70,sounds:{},latest:{},session:null,goals:[]};
+let BADGES={};
+const stateHooks=[];
+const onState=f=>{stateHooks.push(f);f(STATE)};
+
+const tier=t=>t?` · Stufe ${t}`:'';
+const FMT={
+  follow:e=>['Neuer Follow','Danke fürs Folgen'],
+  sub:   e=>['Neues Abo',(e.tier?`Stufe ${e.tier}`:'')],
+  resub: e=>['Abo verlängert',`${e.months} Monate${tier(e.tier)}`],
+  gift:  e=>[e.amount>1?'Abos verschenkt':'Abo verschenkt',`${e.amount} ${e.amount>1?'Abos':'Abo'}${tier(e.tier)}`],
+  cheer: e=>['Bits',`${e.amount} Bits`],
+  raid:  e=>['Raid',`mit ${e.amount} ${e.amount==1?'Person':'Leuten'}`],
+  redeem:e=>['Kanalpunkte',e.title||''],
+};
+
+/* ---------- Sound: eigene Datei aus ./sounds oder eingebauter Aether-Klang ---------- */
+let AC=null;
+function chime(type,vol){
+  try{AC=AC||new AudioContext();if(AC.state==='suspended')AC.resume();
+    const base={follow:523.25,sub:440,resub:440,gift:392,cheer:587.33,raid:329.63,redeem:493.88}[type]||440;
+    const steps={raid:[1,1.26,1.5,2,2.52],gift:[1,1.5,2,2.52],cheer:[1,1.26,1.5,2]}[type]||[1,1.5,2];
+    const t0=AC.currentTime+.02,out=AC.createGain();out.gain.value=vol*.5;out.connect(AC.destination);
+    steps.forEach((m,i)=>{[[ 'sine',1,.5],['triangle',.5,.18]].forEach(([w,oct,g])=>{
+      const o=AC.createOscillator(),e=AC.createGain();o.type=w;o.frequency.value=base*m*oct;
+      const t=t0+i*.11;e.gain.setValueAtTime(0,t);e.gain.linearRampToValueAtTime(g,t+.012);
+      e.gain.exponentialRampToValueAtTime(.0001,t+1.8);o.connect(e).connect(out);o.start(t);o.stop(t+1.9)})});
+  }catch(_){}
+}
+function playSound(type){
+  const v=(STATE.volume??70)/100;if(v<=0)return;
+  const src=STATE.sounds&&(STATE.sounds[type]||STATE.sounds.default);
+  if(src){const a=new Audio(src);a.volume=v;a.play().catch(()=>chime(type,v))}else chime(type,v);
+}
+
+/* ---------- Alert-Warteschlange mit Pause und Überspringen ---------- */
+const AQ=[];let busy=false,skipNow=null;
+const hold=ms=>new Promise(r=>{skipNow=r;setTimeout(r,ms)});
+function pushAlert(e){if(!ALERTS||!FMT[e.type])return;AQ.push(e);if(!busy)nextAlert()}
+async function nextAlert(){
+  if(!AQ.length){busy=false;return}busy=true;
+  while(STATE.paused)await wait(300);
+  await showAlert(AQ.shift());await wait(500);nextAlert();
+}
+async function showAlert(e){
+  const [kind,detail]=FMT[e.type](e);
+  const a=el('div','alert');const b=el('div','body');
+  const k=el('div','a-kind');k.textContent=kind;
+  const n=el('div','a-name');const d=el('div','a-detail');d.textContent=detail;
+  b.append(k,n,d);
+  if(e.text){const m=el('div','a-msg');m.textContent=e.text;b.appendChild(m)}
+  if(e.type==='raid'||(e.type==='gift'&&e.amount>=5)||(e.type==='cheer'&&e.amount>=1000)){
+    const mk=makeMark({d:200,t:520});mk.style.cssText='width:58px;margin:0 auto 12px';b.prepend(mk)}
+  a.appendChild(b);alertBox.appendChild(a);
+  const C=new Cipher(n,{stagger:55,shuffle:520});C.build((e.user||'Anonym').slice(0,25));
+  await wait(40);a.classList.add('in');playSound(e.type);await wait(450);
+  await C.reveal();a.classList.add('done');
+  await hold(e.text?8000:5500);skipNow=null;
+  await C.conceal();a.classList.remove('in');await wait(750);a.remove();
+}
+
+/* ---------- Ziele ---------- */
+function goalsInto(box){
+  const map={};
+  onState(s=>{
+    const gs=s.goals||[],keys=new Set(gs.map(g=>g.key));
+    Object.keys(map).forEach(k=>{if(!keys.has(k)){map[k].remove();delete map[k]}});
+    gs.forEach(g=>{
+      let d=map[g.key];
+      if(!d){d=el('div','goal');d.innerHTML='<div class="g-top"><span class="g-l"></span><span class="g-v"></span></div><div class="g-track"><div class="g-fill"></div><i class="g-head"></i></div>';
+        box.appendChild(d);map[g.key]=d}
+      const full=g.cur>=g.target;d.classList.toggle('full',full);
+      d.querySelector('.g-l').textContent=full?'Ziel erreicht':g.label;
+      d.querySelector('.g-v').textContent=`${g.cur.toLocaleString('de-DE')} / ${g.target.toLocaleString('de-DE')}`;
+      requestAnimationFrame(()=>requestAnimationFrame(()=>d.style.setProperty('--p',Math.max(0,Math.min(1,g.cur/g.target)))));
+    });
+    box.classList.toggle('empty',!gs.length);
+  });
+}
+
+/* ---------- Letzte Unterstützer in Spielszenen (in der Bridge an/aus und Auswahl) ---------- */
+const LT_LBL={follow:'Letzter Follow',sub:'Letztes Abo',gift:'Letztes Geschenk',cheer:'Letzte Bits',raid:'Letzter Raid'};
+function latestInto(box,{max=5}={}){
+  onState(s=>{
+    const L=s.latest||{},items=(s.show_latest===false?[]:(s.latest_items||['follow','sub','cheer'])).filter(k=>L[k]).slice(0,max);
+    box.innerHTML='';
+    items.forEach(k=>{const e=L[k],v=e.user+(e.amount&&k!=='sub'&&k!=='follow'?` · ${e.amount}`:'');
+      const d=el('div','goal lt');d.innerHTML=`<div class="g-top"><span class="g-l"></span><span class="g-v"></span></div>`;
+      d.querySelector('.g-l').textContent=LT_LBL[k];d.querySelector('.g-v').textContent=v;box.appendChild(d)});
+    box.classList.toggle('empty',!items.length);
+  });
+}
+
+/* ---------- Letzte Unterstützer & Rückblick ---------- */
+const names=(a,n=2)=>a.length<=n?a.join(', '):`${a.slice(0,n).join(', ')} und ${a.length-n} weitere`;
+function latestLines(){
+  const L=STATE.latest||{},o=[];
+  if(L.follow)o.push(`Letzter Follow: ${L.follow.user}`);
+  if(L.sub)o.push(`Letztes Abo: ${L.sub.user}`);
+  if(L.gift)o.push(`Letztes Geschenk: ${L.gift.user} · ${L.gift.amount}`);
+  if(L.cheer)o.push(`Letzte Bits: ${L.cheer.user} · ${L.cheer.amount}`);
+  return o;
+}
+function recapLines(){
+  const s=STATE.session;if(!s)return [];
+  const o=[],top=obj=>Object.entries(obj||{}).sort((a,b)=>b[1]-a[1]);
+  if(s.km>0)o.push(`Heute gefahren: ${s.km.toLocaleString('de-DE')} km`);
+  if(s.follows?.length)o.push(`Neu dabei: ${names(s.follows)}`);
+  if(s.subs?.length)o.push(`Abos: ${names(s.subs)}`);
+  const g=top(s.gifts);if(g.length)o.push(`Verschenkt: ${g.slice(0,2).map(([n,c])=>`${n} (${c})`).join(', ')}`);
+  const b=top(s.bits);if(b.length)o.push(`Bits: ${b.slice(0,2).map(([n,c])=>`${n} (${c})`).join(', ')}`);
+  (s.raids||[]).slice(-2).forEach(r=>o.push(`Raid: ${r.user} mit ${r.amount}`));
+  return o;
+}
+
+/* ---------- Eigener Chat ---------- */
+let chatLog=null;
+function readable(hex,name){
+  let h,s=.7,l=.72;
+  const m=/^#?([0-9a-f]{6})$/i.exec(hex||'');
+  if(m){const n=parseInt(m[1],16),r=(n>>16)/255,g=(n>>8&255)/255,b=(n&255)/255;
+    const mx=Math.max(r,g,b),mn=Math.min(r,g,b);l=(mx+mn)/2;
+    if(mx===mn){h=0;s=0}else{const d=mx-mn;s=l>.5?d/(2-mx-mn):d/(mx+mn);
+      h=mx===r?(g-b)/d+(g<b?6:0):mx===g?(b-r)/d+2:(r-g)/d+4;h*=60}
+    l=Math.max(l,.68);s=Math.min(s,.85);
+  }else{h=[...(name||'?')].reduce((a,c)=>a+c.charCodeAt(0)*7,0)%360}
+  return `hsl(${h|0} ${(s*100)|0}% ${(l*100)|0}%)`;
+}
+function addChat(c){
+  if(!chatLog)return;
+  const m=el('div','msg');m.dataset.id=c.id||'';m.dataset.uid=c.uid||'';
+  const head=el('div','m-head');
+  (c.badges||[]).forEach(k=>{if(BADGES[k]){const i=el('img','m-badge');i.src=BADGES[k];i.alt='';head.appendChild(i)}});
+  const nm=el('span','m-name');nm.textContent=c.user;nm.style.color=readable(c.color,c.user);head.appendChild(nm);
+  const tx=el('div','m-text');
+  (c.frags||[]).forEach(f=>{
+    if(f.e){const i=el('img','m-emote');i.src=`https://static-cdn.jtvnw.net/emoticons/v2/${f.e}/default/dark/2.0`;i.alt=f.t;tx.appendChild(i)}
+    else tx.appendChild(document.createTextNode(f.t));
+  });
+  m.append(head,tx);chatLog.appendChild(m);
+  while(chatLog.children.length>40)chatLog.firstChild.remove();
+}
+function chatRemove(sel){if(chatLog)chatLog.querySelectorAll(sel).forEach(n=>n.classList.add('gone'))}
+
+/* ---------- Verbindung zur Bridge ---------- */
+function onMessage(e){
+  switch(e.type){
+    case 'state':STATE=Object.assign(STATE,e);stateHooks.forEach(f=>f(STATE));break;
+    case 'badges':BADGES=e.map||{};break;
+    case 'chat':addChat(e);break;
+    case 'chat_delete':chatRemove(`[data-id="${CSS.escape(e.id||'')}"]`);break;
+    case 'chat_delete_user':chatRemove(`[data-uid="${CSS.escape(e.uid||'')}"]`);break;
+    case 'chat_clear':if(chatLog)chatLog.innerHTML='';break;
+    case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
+    default:pushAlert(e);
+  }
+}
+const SAMPLES=[
+  {type:'follow',user:'Aetherwanderer'},
+  {type:'sub',user:'Nachtfalke',tier:1},
+  {type:'resub',user:'Kaelthas_DE',months:14,tier:1,text:'Seit Tag eins dabei. Auf die nächsten Abyss-Runs!'},
+  {type:'gift',user:'Lichtbringerin',amount:5,tier:1},
+  {type:'cheer',user:'Runenleser',amount:500,text:'Für neue Server-Hardware'},
+  {type:'raid',user:'VOIDCrew',amount:23},
+  {type:'redeem',user:'Sternenstaub',title:'Trink was!'},
+];
+function testMode(){
+  onMessage({type:'state',show_latest:true,latest_items:['follow','sub','cheer'],counts:{followers:412,subs:37},latest:{follow:{user:'Aetherwanderer'},sub:{user:'Kaelthas_DE'},cheer:{user:'Runenleser',amount:500}},
+    session:{follows:['Aetherwanderer','Sternenstaub','Nachtfalke','Mondsichel'],subs:['Nachtfalke','Kaelthas_DE'],
+      gifts:{Lichtbringerin:5},bits:{Runenleser:500,Abyssgaenger:100},raids:[{user:'VOIDCrew',amount:23}]},
+    goals:[{key:'follow',label:'Follower-Ziel',cur:412,target:500},{key:'sub',label:'Abo-Ziel',cur:37,target:50},{key:'bits',label:'Bits-Ziel',cur:2600,target:5000}]});
+  BADGES={'broadcaster/1':'https://static-cdn.jtvnw.net/badges/v1/5527c58c-fb7d-422d-b71b-f309dcb85cc1/2'};
+  const lines=['Guten Abend zusammen!','Welche Klasse spielst du in AION 2?','Kantor, natürlich.','Die Flügel im Overlay sind schick',
+    'Wann ist der nächste LAN-Abend?','GG, der Boss lag beim zweiten Versuch','Server läuft wieder, danke!'];
+  const who=[['Sternenstaub','#9B6BFF'],['Nachtfalke','#1E90FF'],['Kaelthas_DE',''],['Mondsichel','#FF7F50'],['Runenleser','#2E8B57']];
+  let i=0;const tick=()=>{const [u,c]=who[i%who.length];
+    addChat({id:'t'+i,uid:u,user:u,color:c,badges:i%5===0?['broadcaster/1']:[],frags:[{t:lines[i%lines.length]+' '},...(i%3===1?[{e:'25',t:'Kappa'}]:[])]});i++};
+  for(let k=0;k<6;k++)tick();setInterval(tick,2600);
+  let j=0;pushAlert(SAMPLES[j++]);setInterval(()=>pushAlert(SAMPLES[j++%SAMPLES.length]),12000);
+}
+function bridge(){
+  if(ALERTS)stage.appendChild(alertBox);
+  if(TEST)testMode();
+  if(P.get('bridge')==='0')return;
+  const url=`http://${P.get('host')||'127.0.0.1'}:${P.get('port')||8787}/events`;
+  try{const es=new EventSource(url);es.onmessage=m=>{try{onMessage(JSON.parse(m.data))}catch(_){}}}catch(_){}
+}
+
+document.fonts.ready.then(()=>{
+  if(SC[SCENE])fullscreen(SC[SCENE]);
+  else if(SCENE==='chat')chat();
+  else if(SCENE==='game')game();
+  else if(SCENE==='stinger'){stinger();return}
+  else if(SCENE==='goals'){const gb=el('div','goals stack empty');gb.style.cssText='left:48px;top:48px;width:380px';stage.appendChild(gb);goalsInto(gb)}
+  else if(SCENE!=='alerts')fullscreen(SC.start);
+  bridge();
+});
+</script>
+</body>
+</html>
