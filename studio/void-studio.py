@@ -23,7 +23,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, threading,
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.1"
+STUDIO_VERSION = "1.0.2"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -900,6 +900,19 @@ def remove_pack(pid):
         log(f"{pid} entfernt. Die Szenensammlung in OBS bitte selbst löschen.")
 
 
+def running_elsewhere():
+    """Pfad dieser Datei, wenn OBS sie nicht aus der zentralen Kopie lädt (z. B. direkt aus dem Download-Ordner)."""
+    me = os.path.abspath(__file__)
+    return None if os.path.normcase(me) == os.path.normcase(STUDIO_PATH) else me
+
+
+def write_studio(path, blob):
+    if os.path.isfile(path):
+        shutil.copy2(path, path + f".{STUDIO_VERSION}.bak")
+    with open(path, "wb") as f:
+        f.write(blob)
+
+
 def update_studio():
     s = (mgr["index"] or {}).get("studio")
     if not s or ver(s["version"]) <= ver(STUDIO_VERSION):
@@ -909,12 +922,20 @@ def update_studio():
         blob = fetch(s["file"], 60)
         if hashlib.sha256(blob).hexdigest() != s["sha256"]:
             raise ValueError("Prüfsumme stimmt nicht – Update verworfen")
-        if os.path.isfile(STUDIO_PATH):
-            shutil.copy2(STUDIO_PATH, STUDIO_PATH + f".{STUDIO_VERSION}.bak")
-        with open(STUDIO_PATH, "wb") as f:
-            f.write(blob)
-        log(f"VOID Studio {s['version']} eingespielt. In OBS: Werkzeuge → Skripte → Skripte neu laden.")
+        write_studio(STUDIO_PATH, blob)
+        # Lädt OBS dieses Skript aus einem anderen Ordner (erste Einrichtung aus dem Download), diese Datei auch
+        # ersetzen, sonst bliebe die Szenensammlung, in der es eingebunden ist, auf der alten Version.
+        other = running_elsewhere()
+        if other:
+            try:
+                write_studio(other, blob)
+            except OSError as e:
+                log(f"{other} nicht ersetzt ({e}); dort läuft weiter {STUDIO_VERSION}.")
+        note = f"VOID Studio {s['version']} eingespielt. Jetzt in OBS: Werkzeuge → Skripte → „Skripte neu laden“."
+        mgr["notes"].append(note)
+        log(note)
     except Exception as e:
+        mgr["notes"].append(f"Studio-Update fehlgeschlagen: {e}")
         log(f"Studio-Update fehlgeschlagen: {e}")
 
 
@@ -988,8 +1009,17 @@ def ui_open(props, prop):
 
 
 def ui_studio(props, prop):
-    in_thread(update_studio)
+    update_studio()                            # eine Datei, kurz; danach steht der Hinweis gleich im Fenster
+    fill_packs(props)
     return True
+
+
+def ui_open_central(props, prop):
+    try:
+        os.startfile(DATA_DIR)                 # Windows
+    except AttributeError:
+        webbrowser.open("file://" + DATA_DIR)
+    return False
 
 
 # ---------------------------------------------------------------- OBS-Oberfläche
@@ -1101,6 +1131,13 @@ def script_properties():
         obs.obs_properties_add_button(g, "m_check", "Nach Updates suchen", ui_check)
         obs.obs_properties_add_button(g, "m_all", "Alle Pack-Updates installieren", ui_install_all)
         obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
+        other = running_elsewhere()
+        if other:
+            obs.obs_properties_add_text(g, "studio_where", (
+                f"Dieses Skript läuft aus {other}. Updates landen in beiden Dateien, sicherer ist aber die zentrale Kopie: "
+                f"unter Werkzeuge → Skripte dieses Skript entfernen und mit + {STUDIO_PATH} hinzufügen. "
+                "Die Packs nutzen sie ohnehin."), INFO)
+            obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
     def twitch(g):
         obs.obs_properties_add_text(g, "twitch_status", twitch_status(), INFO)
