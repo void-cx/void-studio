@@ -33,7 +33,8 @@ Updates: „Nach Updates suchen“ und „Alle Pack-Updates installieren“. Die
 
 | Pfad | Zweck |
 | --- | --- |
-| \`import.template.json\` | Vorlage der Szenensammlung; VOID Studio erzeugt daraus \`import.json\` mit den Pfaden deines Rechners |
+| \`import.json\` | Die Datei für OBS (Szenensammlung → Importieren). Erzeugt VOID Studio beim Installieren mit den Pfaden deines Rechners |
+| \`_vorlage/import.template.json\` | Vorlage dafür; nicht in OBS importieren. VOID Studio braucht sie, um \`import.json\` neu zu erzeugen |
 | \`pack.json\` | Name, Version und Szenen-Fingerabdruck für Updates |
 | \`obs/\` | Einstiegsdateien der Browserquellen. Parameter hier anhängen, z. B. \`#scene=game&cam=bl\` |
 | \`scenes.html\` | Alle Szenen. Im Browser testen: \`scenes.html?scene=start&test=1&demo=1\` |

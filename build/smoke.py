@@ -20,7 +20,7 @@ async def main():
                 await pg.wait_for_timeout(1500)
                 if errs:
                     fails.append(f'{d} / {sc}: {errs[0]}')
-            missing = [f for f in ('pack.json', 'import.template.json', 'scenes.html') if not os.path.isfile(f'{P}/{d}/{f}')]
+            missing = [f for f in ('pack.json', '_vorlage/import.template.json', 'scenes.html') if not os.path.isfile(f'{P}/{d}/{f}')]
             if missing:
                 fails.append(f'{d}: fehlt {", ".join(missing)}')
             await pg.close()

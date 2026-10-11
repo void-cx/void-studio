@@ -99,9 +99,10 @@ for key,cfg in THEMES.items():
     for lic in cfg['licenses']:
         shutil.copy(lic.replace('-x','')+'/LICENSE',f"{d}/assets/fonts/LICENSE-{lic.split('-',1)[1].rsplit('-',1)[0]}.txt")
     coll=obs_json(key,cfg)
-    for old in ('import.json','bridge'):                       # alte Bridge-Kopien/Importe aus früheren Builds weg
+    for old in ('import.json','bridge','import.template.json'):                       # alte Bridge-Kopien/Importe aus früheren Builds weg
         q=os.path.join(d,old); shutil.rmtree(q) if os.path.isdir(q) else (os.remove(q) if os.path.exists(q) else None)
-    json.dump(coll,open(d+'/import.template.json','w',encoding='utf-8'),ensure_ascii=False,indent=4)
+    # Vorlage im Unterordner: oben im Pack liegt nach der Installation nur import.json, die Datei für OBS
+    os.makedirs(d+'/_vorlage',exist_ok=True); json.dump(coll,open(d+'/_vorlage/import.template.json','w',encoding='utf-8'),ensure_ascii=False,indent=4)
     import hashlib
     sig=[(s['name'],[i['name'] for i in s['settings']['items']]) for s in coll['sources'] if s['id']=='scene']
     VER=json.load(open('versions.json'))
