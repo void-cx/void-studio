@@ -15,9 +15,11 @@ on:
 permissions:
   contents: write
 
+# PR-Prüfungen dürfen sich gegenseitig abbrechen, Läufe auf main (Release) nie: sonst kann eine verspätete
+# PR-Prüfung nach dem Merge den Release-Build abschießen.
 concurrency:
-  group: build-${{ github.ref }}
-  cancel-in-progress: true
+  group: build-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:
