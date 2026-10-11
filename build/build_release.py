@@ -13,7 +13,12 @@ for d in sorted(os.listdir(PACKS)):
         for root,_,files in os.walk(src):
             for f in files:
                 full=os.path.join(root,f); z.write(full,os.path.join(d,os.path.relpath(full,src)))
-    idx['packs'].append({**man,'file':os.path.basename(zf),'sha256':sha(zf),'size':os.path.getsize(zf)})
+    # Vorschaubilder zusätzlich einzeln im Release, damit das Portal sie zeigen kann (VOID Studio → Szenen für OBS)
+    order=['start','chat','game','drive','end']; prev=os.path.join(src,'preview'); previews=[]
+    for f in sorted(os.listdir(prev) if os.path.isdir(prev) else [],key=lambda f:(order.index(f[:-4]) if f[:-4] in order else 99,f)):
+        if f.endswith('.jpg'):
+            shutil.copy(os.path.join(prev,f),os.path.join(OUT,f'{d}-{f}')); previews.append({'scene':f[:-4],'file':f'{d}-{f}'})
+    idx['packs'].append({**man,'file':os.path.basename(zf),'sha256':sha(zf),'size':os.path.getsize(zf),'previews':previews})
 shutil.copy('../studio/void-studio.py',OUT)
 log=json.load(open('changelog.json',encoding='utf-8'))
 idx['studio']={'version':V['studio'],'file':'void-studio.py','sha256':sha(os.path.join(OUT,'void-studio.py')),'changelog':log.get(V['studio'],[])}
