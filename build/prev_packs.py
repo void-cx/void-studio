@@ -9,7 +9,7 @@ async def main():
         b=await p.chromium.launch();pg=await b.new_page(viewport={'width':1920,'height':1080})
         bad=[];pg.on('requestfailed',lambda r:bad.append(r.url))
         import sys
-        for theme in (sys.argv[1:] or ['aion2','wardogs','minecraft','ets2']):
+        for theme in (sys.argv[1:] or [t for t in ['aion2','wardogs','minecraft','ets2','gta','void'] if os.path.isdir(f'{P}/void-theme-{t}')]):
             for name,q,ms in SHOTS+([('drive','scene=drive&demo=1&test=1',5000)] if theme=='ets2' else []):
                 await pg.goto(f'file://{P}/void-theme-{theme}/scenes.html?{q}&bridge=0');await pg.wait_for_timeout(ms)
                 fonts=await pg.evaluate("[...document.fonts].filter(f=>f.status==='loaded').map(f=>f.family+' '+f.weight)")

@@ -8,6 +8,7 @@ OBS-Szenen-Packs für Enter The Void plus **VOID Studio** – ein OBS-Skript, da
 2. `void-studio.py` aus dem [neuesten Release](../../releases/latest) laden und unter Werkzeuge → Skripte → `+` hinzufügen.
 3. Im Skript-Fenster Pack wählen → „Pack installieren“ → „Pack-Ordner öffnen“ → OBS: Szenensammlung → Importieren → `import.json`.
 4. „Mit Twitch verbinden“ – einmal für alle Packs.
+5. Optional: im Portal unter Konto → Login Twitch verknüpfen. Dann zeigt [my.void.cx/studio](https://my.void.cx/studio) deine Stream-Statistiken, und der Discord kann deinen Go-Live ankündigen.
 
 ## Für Entwickler
 
@@ -22,6 +23,7 @@ OBS-Szenen-Packs für Enter The Void plus **VOID Studio** – ein OBS-Skript, da
 | `build/font/` | eigene VOID-Schriften: VOID Runes (nur AION 2) und VOID Latin |
 | `build/changelog.json` | Änderungen pro Studio-Version |
 | `build/smoke.py` / `ci_release_check.py` | Schnellprüfung und Release-Entscheidung für die CI |
+| `build/requirements.txt` | Python-Abhängigkeiten für Build und CI |
 | `.github/workflows/build.yml` | GitHub Actions: Prüfung bei PRs, Build und Release auf `main` |
 
 Ablauf für ein Update: Änderung machen, Version des Packs (und bei Studio-Änderungen `studio`) in `versions.json` hochzählen, Eintrag in `changelog.json`, pushen. Den Rest erledigt GitHub Actions:
@@ -32,7 +34,7 @@ Ablauf für ein Update: Änderung machen, Version des Packs (und bei Studio-Änd
 | Push auf `main` | Schnellprüfung, dann voller Build mit Übergängen und Vorschauen und ein neues Release – **nur wenn sich eine Version geändert hat** (~15 min) |
 | Actions → „Build & Release“ → Run workflow | wie Push, optional mit erzwungenem Release |
 
-Ohne Versionssprung gibt es kein Release, damit VOID Studio keine Schein-Updates meldet. Lokal geht es weiterhin mit `build/build.sh` und `build/publish.sh`.
+Ohne Versionssprung gibt es kein Release, damit VOID Studio keine Schein-Updates meldet. Lokal geht es weiterhin mit `pip install -r build/requirements.txt`, `build/build.sh` und `build/publish.sh`.
 Einzelnes Pack bauen: `build/build.sh wardogs`.
 
 Die Theme-Anleitung (Regeln, Aufbau, Beispiel) liegt als Claude-Doc vor und sollte als `docs/THEMES.md` ins Repo exportiert werden.
