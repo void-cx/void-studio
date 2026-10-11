@@ -63,7 +63,7 @@ jobs:
         run: python ci_release_check.py
       - name: Build (Packs, Übergänge, Vorschauen, index.json)
         if: steps.need.outputs.release == 'true'
-        run: ./build.sh
+        run: bash build.sh
       - name: Veröffentlichen
         if: steps.need.outputs.release == 'true'
         env:
