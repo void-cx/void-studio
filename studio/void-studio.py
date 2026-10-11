@@ -4,6 +4,7 @@ VOID Studio – OBS-Skript (Werkzeuge → Skripte → +)
 Eins für alles:
   · Szenen-Packs verwalten: aus dem GitHub-Repo installieren, aktualisieren, entfernen
   · VOID Twitch Bridge: Alerts, Sounds, Chat, Ziele, letzte Unterstützer, Rückblick, Spiel-Telemetrie
+  · IRL: bei Verbindungsabbruch selbst auf „Verbindung weg“ schalten und zurück
 
 Erster Start: Dieses Skript einmal in OBS hinzufügen. Es kopiert sich nach %APPDATA%/VOID-Bridge/void-studio.py;
 alle über VOID Studio installierten Szenensammlungen nutzen genau diese eine Kopie.
@@ -23,7 +24,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, threading,
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.3"
+STUDIO_VERSION = "1.0.4"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +46,7 @@ ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
-       "ignore": set(), "hide_cmd": True}
+       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
 gen = [0]
@@ -224,6 +225,72 @@ def telemetry_loop():
 
 
 # ---------------------------------------------------------------- Steuerung
+# ---------- IRL: Verbindungsabbruch erkennen und Szene wechseln ----------
+# Läuft im OBS-Takt (timer_add), nicht in einem eigenen Thread: Szenen dürfen nur von dort umgeschaltet werden.
+IRL_SCENE = "Verbindung weg"
+IRL_LIVE_SCENES = ("Unterwegs", "Zwei Kameras", "Bild im Bild", "Vier Kameras", "Just Chatting")
+irl = {"live": None, "since": None, "changed": 0.0, "prev": None}
+
+
+def irl_snapshot():
+    return {"type": "irl", "live": bool(irl["live"]), "since": irl["since"]}
+
+
+def source_live(name):
+    """True, wenn die Medienquelle läuft und Bild hat; None, wenn es sie in dieser Szenensammlung nicht gibt."""
+    src = obs.obs_get_source_by_name(name)
+    if not src:
+        return None
+    try:
+        return obs.obs_source_media_get_state(src) == obs.OBS_MEDIA_STATE_PLAYING and obs.obs_source_get_width(src) > 0
+    finally:
+        obs.obs_source_release(src)
+
+
+def current_scene_name():
+    src = obs.obs_frontend_get_current_scene()
+    if not src:
+        return None
+    try:
+        return obs.obs_source_get_name(src)
+    finally:
+        obs.obs_source_release(src)
+
+
+def switch_scene(name):
+    src = obs.obs_get_source_by_name(name)
+    if not src:
+        return False
+    try:
+        obs.obs_frontend_set_current_scene(src)
+        return True
+    finally:
+        obs.obs_source_release(src)
+
+
+def irl_tick():
+    try:
+        if not cfg["irl_auto"]:
+            return
+        live = source_live(cfg["irl_source"])
+        if live is None:
+            return
+        now = time.time()
+        if live != irl["live"]:
+            irl.update(live=live, changed=now, since=None if live else int(now))
+            send_all(irl_snapshot())                     # „Verbindung weg“ zeigt, seit wann, und meldet die Rückkehr
+        held = now - irl["changed"]
+        scene = current_scene_name()
+        if not live and held >= cfg["irl_delay"] and scene in IRL_LIVE_SCENES and switch_scene(IRL_SCENE):
+            irl["prev"] = scene
+            log(f"IRL: {cfg['irl_source']} ohne Signal – auf „{IRL_SCENE}“ geschaltet.")
+        elif live and held >= cfg["irl_back"] and scene == IRL_SCENE and irl["prev"] and switch_scene(irl["prev"]):
+            log(f"IRL: Signal wieder da – zurück auf „{irl['prev']}“.")
+            irl["prev"] = None
+    except Exception as e:                                # ein Fehler im Takt darf OBS nicht stören
+        log(f"IRL: {e}")
+
+
 def ctl_replay(*_):
     with lock:
         ev = state["last_alert"]
@@ -324,6 +391,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         q = queue.Queue()
         q.put(json.dumps(snapshot(), ensure_ascii=False))
+        if irl["live"] is not None:
+            q.put(json.dumps(irl_snapshot()))
         if badges:
             q.put(json.dumps({"type": "badges", "map": badges}))
         with clients_lock:
@@ -1064,6 +1133,9 @@ def script_defaults(settings):
     obs.obs_data_set_default_bool(settings, "hide_cmd", True)
     obs.obs_data_set_default_string(settings, "ignore", "streamelements, nightbot, streamlabs, moobot")
     obs.obs_data_set_default_string(settings, "tele_url", "http://127.0.0.1:25555/api/ets2/telemetry")
+    obs.obs_data_set_default_string(settings, "irl_source", "Kamera 1")
+    obs.obs_data_set_default_int(settings, "irl_delay", 3)
+    obs.obs_data_set_default_int(settings, "irl_back", 5)
 
 
 def studio_head():
@@ -1198,6 +1270,15 @@ def script_properties():
         tip(obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT),
             "Funbit-Format, z. B. http://127.0.0.1:25555/api/ets2/telemetry")
 
+    def irl_group(g):
+        tip(obs.obs_properties_add_bool(g, "irl_auto", "Bei Abbruch auf „Verbindung weg“ schalten"),
+            "Nur aus den Kamera-Szenen (Unterwegs, Zwei Kameras, Bild im Bild, Vier Kameras, Just Chatting); "
+            "kommt das Signal zurück, geht es in die Szene von vorher.")
+        tip(obs.obs_properties_add_text(g, "irl_source", "Kamera-Quelle", obs.OBS_TEXT_DEFAULT),
+            "Name der Medienquelle, die überwacht wird. Standard: Kamera 1")
+        obs.obs_properties_add_int(g, "irl_delay", "Umschalten nach (Sekunden)", 1, 60, 1)
+        obs.obs_properties_add_int(g, "irl_back", "Zurück nach stabilem Signal (Sekunden)", 1, 60, 1)
+
     def tech(g):
         tip(obs.obs_properties_add_int(g, "port", "Lokaler Port", 1024, 65535, 1),
             "Über diesen Port holen sich die Szenen die Live-Daten. Nur ändern, wenn 8787 belegt ist.")
@@ -1214,6 +1295,7 @@ def script_properties():
     group(p, "g_scenes", "Spielszenen und Rückblick", None, scenes)
     group(p, "g_chat", "Chat", None, chat)
     group(p, "g_tele", "Telemetrie (ETS2/ATS)", "Für die Szene „ETS2 Telemetrie“; braucht einen laufenden Telemetrie-Server.", telemetry)
+    group(p, "g_irl", "IRL", "Für das IRL-Pack: überwacht die Kamera-Quelle und schaltet bei einem Abbruch selbst um.", irl_group)
     group(p, "g_tech", "Technik", None, tech)
     fill_packs(p)
     return p
@@ -1249,6 +1331,9 @@ def script_update(settings):
                show_latest=obs.obs_data_get_bool(settings, "show_latest"),
                latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
                tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
+               irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
+               irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
+               irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
                ignore={n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()})
     if port_changed:
         start_server()
@@ -1275,6 +1360,7 @@ def script_load(settings):
                 log(f"{pid}: import.json nicht erzeugt: {e}")
     in_thread(check_updates)
     threading.Thread(target=telemetry_loop, daemon=True).start()
+    obs.timer_add(irl_tick, 500)
     log(f"Daten und Sounds: {DATA_DIR}")
     load_state()
     for key, desc, fn in HOTKEYS:
@@ -1294,6 +1380,7 @@ def script_save(settings):
 
 
 def script_unload():
+    obs.timer_remove(irl_tick)
     stop.set()
     stop_eventsub()
     stop_server()

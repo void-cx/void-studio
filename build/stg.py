@@ -2,6 +2,7 @@ import asyncio,sys,os,shutil,subprocess
 from playwright.async_api import async_playwright
 from PIL import Image
 import os
+import themes
 P=os.path.abspath('dist/packs'); FPS=60; DUR=1.95
 async def frames(pg,theme,times,outdir):
     await pg.goto(f'file://{P}/void-theme-{theme}/scenes.html?scene=stinger&render=1&bridge=0&alerts=0')
@@ -13,7 +14,7 @@ async def main(mode):
     async with async_playwright() as p:
         b=await p.chromium.launch();pg=await b.new_page(viewport={'width':1920,'height':1080})
         pg.on('pageerror',lambda e:print('ERR',e))
-        for theme in (sys.argv[2:] or [t for t in ['aion2','wardogs','minecraft','ets2','gta','void'] if os.path.isdir(f'{P}/void-theme-{t}')]):
+        for theme in [t['id'] for t in themes.load(sys.argv[2:]) if os.path.isdir(f"{P}/void-theme-{t['id']}")]:
             if mode=='check':
                 d=f'/tmp/chk_{theme}';shutil.rmtree(d,ignore_errors=True);os.makedirs(d)
                 ts=[250,520,900,1300,1650];await frames(pg,theme,ts,d)

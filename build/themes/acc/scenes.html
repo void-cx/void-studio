@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<!--
+  VOID × Assetto Corsa · OBS-Szenenset im TV-Look (Competizione und EVO) – Browserquelle 1920 × 1080, eigene Framerate 60
+
+  In OBS als „Lokale Datei“ die passende Einstiegsdatei aus obs/ wählen. Parameter dort anhängen (#…&…).
+
+  ?scene=start     Stream startet        Startampel; &min=5 Countdown, die Ampel geht bei 0 aus
+  ?scene=pause     Kurze Pause           Boxentafel mit Standzeit
+  ?scene=end       Stream endet          Zielflagge und Klassement aus dem Session-Rückblick
+  ?scene=chat      Just Chatting         Kamera-Loch x 64 y 176 1248 × 702, daneben Race Control (Chat)
+  ?scene=game      Assetto Corsa         transparent, Onboard-Kamera  &cam=rm|lm|br|bl|tr|tl|off (Standard rm: x 1472 y 330 416 × 234)
+  ?scene=alerts    nur Alerts            ?scene=goals  nur Ziele        ?scene=stinger  Vorschau des Übergangs
+
+  Optional: &track=Spa-Francorchamps  &car=BMW%20M4%20GT3  &series=VOID%20Cup  (Infotafeln in Start und Pause)
+            &title=…  &sub=A|B|C  &alerts=0  &goals=0  &test=1  &demo=1  &bridge=0  &port=8787  &host=…
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOID × Assetto Corsa · Szenen</title>
+<style>
+@font-face{font-family:"Barlow Condensed";font-weight:500;src:url(data:font/woff2;base64,__BC5__) format("woff2");font-display:block}
+@font-face{font-family:"Barlow Condensed";font-weight:700;src:url(data:font/woff2;base64,__BC7__) format("woff2");font-display:block}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(data:font/woff2;base64,__JB5__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(data:font/woff2;base64,__SG4__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
+:root{
+  --carbon:#0A0A10; --panel:#12121B; --panel2:#1A1A26; --line:rgba(255,255,255,.10);
+  --white:#F5F6FA; --mute:#8C8FA6;
+  --purple:#B303F8;     /* VOID-Violett = schnellster Sektor */
+  --blue:#1141E4; --green:#1FD06A; --yellow:#FFD400; --red:#E10600;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:"Space Grotesk",system-ui,sans-serif;color:var(--white);-webkit-font-smoothing:antialiased}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden}
+.cond{font-family:"Barlow Condensed",sans-serif;text-transform:uppercase}
+.mono{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+.slant{transform:skewX(-10deg)}
+.unslant{transform:skewX(10deg)}
+
+/* ---------- Karbon-Grund mit Tempo-Streifen ---------- */
+.carbon{position:absolute;inset:0;background:
+  radial-gradient(1100px 700px at 85% 20%, rgba(179,3,248,.20), transparent 70%),
+  radial-gradient(900px 600px at 0% 100%, rgba(17,65,228,.22), transparent 70%),
+  repeating-linear-gradient(45deg, rgba(255,255,255,.025) 0 6px, transparent 6px 12px),
+  repeating-linear-gradient(-45deg, rgba(0,0,0,.35) 0 6px, transparent 6px 12px),
+  linear-gradient(180deg,#0D0D15,#08080D)}
+.streaks{position:absolute;inset:0;overflow:hidden}
+.streak{position:absolute;height:2px;width:520px;left:-600px;opacity:.0;
+  background:linear-gradient(90deg,transparent,rgba(210,123,255,.8),#fff);animation:streak 2.6s linear infinite}
+@keyframes streak{0%{transform:translateX(0);opacity:0}10%{opacity:.9}100%{transform:translateX(2700px);opacity:0}}
+
+/* ---------- Kopfleiste (Session-Balken) ---------- */
+.session{position:absolute;left:64px;top:48px;display:flex;align-items:stretch;height:52px;filter:drop-shadow(0 6px 18px rgba(0,0,0,.5))}
+.session>*{display:flex;align-items:center;padding:0 22px;background:var(--panel)}
+.session .logo{background:linear-gradient(135deg,var(--purple),var(--blue));padding:0 16px}
+.session .logo img{height:30px}
+.session .s-name{font-family:"Barlow Condensed";font-weight:700;font-size:26px;letter-spacing:.06em;text-transform:uppercase}
+.session .s-state{font-family:"Barlow Condensed";font-weight:700;font-size:22px;letter-spacing:.12em;background:var(--white);color:var(--carbon);text-transform:uppercase}
+.session .s-live{gap:10px;font-family:"Barlow Condensed";font-weight:700;font-size:22px;letter-spacing:.12em;color:var(--white)}
+.session .s-live i{width:12px;height:12px;border-radius:50%;background:var(--red);box-shadow:0 0 12px var(--red);animation:blink 1.2s steps(2) infinite}
+.session .s-clock{font-family:"JetBrains Mono";font-size:22px;color:var(--mute)}
+@keyframes blink{50%{opacity:.25}}
+
+/* ---------- Titel ---------- */
+.headline{position:absolute;left:64px;top:300px}
+.h-eyebrow{font-family:"Barlow Condensed";font-weight:700;font-size:28px;letter-spacing:.32em;color:var(--purple);text-transform:uppercase;margin-bottom:6px}
+.h-title{font-family:"Barlow Condensed";font-weight:700;font-size:168px;line-height:.9;text-transform:uppercase;letter-spacing:.01em;
+  transform:skewX(-10deg);transform-origin:0 100%;animation:hin .9s cubic-bezier(.2,.9,.2,1) both}
+.h-rule{width:620px;height:8px;margin:22px 0 22px;display:flex;gap:6px}
+.h-rule i{flex:1;background:var(--green);transform:scaleX(0);transform-origin:0 50%;animation:sect .5s cubic-bezier(.2,.9,.2,1) both}
+.h-rule i:nth-child(1){animation-delay:.5s}.h-rule i:nth-child(2){animation-delay:.75s}.h-rule i:nth-child(3){animation-delay:1s;background:var(--purple)}
+@keyframes sect{to{transform:none}}
+@keyframes hin{from{opacity:0;transform:skewX(-10deg) translateX(-120px)}}
+.h-status{font-family:"Barlow Condensed";font-weight:500;font-size:44px;letter-spacing:.06em;color:var(--white);text-transform:uppercase;min-height:54px}
+.sw{display:inline-block;transition:opacity .42s,transform .42s cubic-bezier(.2,.9,.2,1)}
+.sw.out{opacity:0;transform:translateX(40px)}
+.sw.in{opacity:0;transform:translateX(-40px);transition:none}
+
+/* ---------- Startampel ---------- */
+.gantry{position:absolute;right:120px;top:190px;display:flex;gap:18px;padding:22px 26px;background:#050508;border:2px solid #1E1E2A;
+  box-shadow:0 20px 50px rgba(0,0,0,.6)}
+.gantry .col{display:flex;flex-direction:column;gap:14px;padding:12px;background:#0E0E14;border-radius:14px}
+.gantry .bulb{width:74px;height:74px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#2A0A0A,#120404 70%);
+  box-shadow:inset 0 0 0 3px #1A0606;transition:background .05s,box-shadow .05s}
+.gantry .col.on .bulb{background:radial-gradient(circle at 40% 35%,#FF6A5A,var(--red) 45%,#7A0300 100%);
+  box-shadow:inset 0 0 0 3px #3A0000,0 0 34px rgba(225,6,0,.85)}
+.gantry-cap{position:absolute;right:120px;top:500px;width:470px;text-align:center;font-family:"Barlow Condensed";font-weight:700;
+  font-size:34px;letter-spacing:.24em;text-transform:uppercase;color:var(--mute)}
+.gantry-cap b{color:var(--white);font-family:"JetBrains Mono";font-weight:500;letter-spacing:.04em;font-size:40px}
+.gantry-cap.go{color:var(--green);animation:go .6s ease-out}
+@keyframes go{from{transform:scale(1.25);opacity:0}}
+
+/* ---------- Infotafeln (Strecke, Auto, Serie) ---------- */
+.infos{position:absolute;left:64px;bottom:150px;display:flex;gap:14px}
+.info{min-width:260px;background:var(--panel);border-left:6px solid var(--purple);padding:14px 20px 16px;animation:up .6s cubic-bezier(.2,.9,.2,1) both}
+.info:nth-child(2){animation-delay:.12s;border-color:var(--blue)}.info:nth-child(3){animation-delay:.24s;border-color:var(--white)}
+.info .k{font-family:"Barlow Condensed";font-weight:700;font-size:18px;letter-spacing:.24em;color:var(--mute);text-transform:uppercase}
+.info .v{font-family:"Barlow Condensed";font-weight:700;font-size:34px;text-transform:uppercase;letter-spacing:.03em}
+@keyframes up{from{opacity:0;transform:translateY(30px)}}
+
+/* ---------- Streckenkarte ---------- */
+.trackmap{position:absolute;right:110px;bottom:120px;width:520px;height:300px}
+.trackmap path.base{fill:none;stroke:rgba(255,255,255,.14);stroke-width:14;stroke-linecap:round;stroke-linejoin:round}
+.trackmap path.lit{fill:none;stroke:url(#tmg);stroke-width:5;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1 0}
+.trackmap circle{fill:#fff;filter:drop-shadow(0 0 8px var(--purple))}
+
+/* ---------- Fußleiste ---------- */
+.ticker{position:absolute;left:0;right:0;bottom:0;height:72px;display:flex;align-items:center;background:var(--panel);border-top:3px solid var(--purple)}
+.ticker .t-tag{height:100%;display:flex;align-items:center;padding:0 28px 0 64px;background:var(--white);color:var(--carbon);
+  font-family:"Barlow Condensed";font-weight:700;font-size:26px;letter-spacing:.14em;text-transform:uppercase;clip-path:polygon(0 0,100% 0,calc(100% - 22px) 100%,0 100%);padding-right:48px}
+.ticker .t-line{flex:1;padding:0 32px;font-family:"Barlow Condensed";font-weight:500;font-size:30px;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap;overflow:hidden}
+.ticker .t-dom{padding:0 64px 0 24px;font-family:"JetBrains Mono";font-size:22px;color:var(--mute)}
+
+/* ---------- Ziele (Fortschritt als Sektorbalken) ---------- */
+.goals{display:flex;flex-direction:column;gap:8px}
+.goal{background:var(--panel);padding:10px 14px 12px;border-left:4px solid var(--purple)}
+.g-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px}
+.g-l{font-family:"Barlow Condensed";font-weight:700;font-size:19px;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+.g-v{font-family:"JetBrains Mono";font-size:17px}
+.g-track{position:relative;height:6px;background:rgba(255,255,255,.08)}
+.g-fill{position:absolute;inset:0;background:linear-gradient(90deg,var(--green),var(--green) 70%,var(--purple))}
+.goal.full .g-l{color:var(--purple)}
+.goal.full .g-fill{background:var(--purple)}
+.goal.lt{border-left-color:var(--white)}
+.goal.lt .g-top{margin:0}
+.goal.lt .g-v{font-family:"Barlow Condensed";font-weight:700;font-size:22px;text-transform:uppercase;max-width:62%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Boxentafel ---------- */
+.pitboard{position:absolute;right:170px;top:170px;width:520px;padding:26px 30px 30px;background:#0B0B0B;border:10px solid #262626;
+  box-shadow:0 30px 70px rgba(0,0,0,.65);transform:rotate(-2deg);animation:board 1s cubic-bezier(.2,.9,.2,1) both}
+.pitboard::before{content:"";position:absolute;left:50%;top:-110px;width:14px;height:100px;margin-left:-7px;background:linear-gradient(90deg,#3A3A3A,#777,#3A3A3A)}
+@keyframes board{from{transform:translateY(-500px) rotate(-8deg)}}
+.pb-row{font-family:"Barlow Condensed";font-weight:700;font-size:96px;line-height:1.02;text-transform:uppercase;letter-spacing:.03em;text-align:center}
+.pb-row.y{color:var(--yellow)}.pb-row.p{color:#D27BFF}.pb-row.s{font-family:"JetBrains Mono";font-weight:500;font-size:74px}
+
+/* ---------- Zielflagge und Klassement ---------- */
+.flag{position:absolute;right:100px;top:130px;width:560px;height:360px;display:grid;grid-template-columns:repeat(14,1fr);filter:drop-shadow(0 18px 30px rgba(0,0,0,.6))}
+.flag i{display:block;background:repeating-linear-gradient(180deg,#fff 0 40px,#0A0A0A 40px 80px);animation:wave 1.6s ease-in-out infinite}
+.flag i:nth-child(even){background:repeating-linear-gradient(180deg,#0A0A0A 0 40px,#fff 40px 80px)}
+@keyframes wave{0%,100%{transform:translateY(-10px) scaleY(.96)}50%{transform:translateY(10px) scaleY(1.02)}}
+.pole{position:absolute;right:652px;top:110px;width:14px;height:640px;background:linear-gradient(90deg,#555,#CCC,#555);border-radius:7px}
+.tower{position:absolute;left:64px;top:520px;width:760px;display:flex;flex-direction:column;gap:4px}
+.tower .t-head{display:flex;justify-content:space-between;padding:10px 18px;background:var(--white);color:var(--carbon);
+  font-family:"Barlow Condensed";font-weight:700;font-size:24px;letter-spacing:.18em;text-transform:uppercase}
+.row{display:flex;align-items:center;height:52px;background:var(--panel);animation:rowin .5s cubic-bezier(.2,.9,.2,1) both}
+.row .pos{width:62px;height:100%;display:flex;align-items:center;justify-content:center;background:var(--panel2);
+  font-family:"Barlow Condensed";font-weight:700;font-size:28px}
+.row .bar{width:6px;height:100%;background:var(--blue)}
+.row .nm{flex:1;padding:0 18px;font-family:"Barlow Condensed";font-weight:700;font-size:30px;text-transform:uppercase;letter-spacing:.03em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .gap{padding:0 18px;font-family:"JetBrains Mono";font-size:20px;color:var(--mute);white-space:nowrap}
+.row.p1 .pos{background:var(--purple)}
+.row.p1 .gap{color:#E8B8FF}
+@keyframes rowin{from{opacity:0;transform:translateX(-60px)}}
+
+/* ---------- Just Chatting: Onboard-Rahmen und Race Control ---------- */
+.camframe{position:absolute;border:3px solid rgba(255,255,255,.9);box-shadow:0 0 0 1px rgba(0,0,0,.6),0 20px 60px rgba(0,0,0,.5)}
+.camframe::after{content:"";position:absolute;left:-3px;right:-3px;bottom:-9px;height:6px;background:linear-gradient(90deg,var(--purple),var(--blue))}
+.camtag{position:absolute;display:flex;height:36px;font-family:"Barlow Condensed";font-weight:700;font-size:21px;letter-spacing:.14em;text-transform:uppercase}
+.camtag b{display:flex;align-items:center;gap:8px;padding:0 14px;background:var(--red)}
+.camtag b i{width:9px;height:9px;border-radius:50%;background:#fff;animation:blink 1.2s steps(2) infinite}
+.camtag span{display:flex;align-items:center;padding:0 16px;background:rgba(10,10,16,.92);max-width:340px;white-space:nowrap;overflow:hidden}
+.rc{position:absolute;display:flex;flex-direction:column;background:rgba(12,12,18,.94)}
+.rc .rc-head{display:flex;align-items:center;justify-content:space-between;height:52px;padding:0 18px;background:var(--white);color:var(--carbon);
+  font-family:"Barlow Condensed";font-weight:700;font-size:24px;letter-spacing:.18em;text-transform:uppercase}
+.rc .rc-head small{font-family:"JetBrains Mono";font-size:16px;letter-spacing:0;color:#555}
+.chatlog{flex:1;display:flex;flex-direction:column;justify-content:flex-end;overflow:hidden;padding:8px 0;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 90px);mask-image:linear-gradient(180deg,transparent 0,#000 90px)}
+.msg{flex-shrink:0;display:grid;grid-template-columns:6px 1fr;column-gap:14px;padding:10px 18px 12px;border-bottom:1px solid var(--line);animation:rowin .45s cubic-bezier(.2,.9,.2,1)}
+.msg::before{content:"";grid-row:1/3;background:var(--uc,var(--blue))}
+.m-head{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.m-badge{width:18px;height:18px}
+.m-name{font-family:"Barlow Condensed";font-weight:700;font-size:22px;letter-spacing:.06em;text-transform:uppercase}
+.m-time{margin-left:auto;font-family:"JetBrains Mono";font-size:14px;color:var(--mute)}
+.m-text{font-size:19px;line-height:1.42;color:#E6E7EF;overflow-wrap:anywhere}
+.m-emote{height:28px;vertical-align:-7px;margin:0 2px}
+.head2{position:absolute;left:64px;top:60px;display:flex;align-items:flex-end;gap:24px}
+.head2 .h-title{font-size:92px;animation:none}
+.right-goals{position:absolute;right:64px;top:62px;width:496px}
+.right-goals .goals{flex-direction:row}.right-goals .goal{flex:1}
+
+/* ---------- Spielszene ---------- */
+.hud{position:absolute;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+
+/* ---------- Alerts: Grafik von links, Sektoren füllen sich (groß: alle violett) ---------- */
+.alerts{position:absolute;left:0;top:300px;z-index:20;pointer-events:none}
+.alert{position:relative;display:flex;align-items:stretch;min-width:640px;max-width:860px;transform:translateX(-110%);transition:transform .55s cubic-bezier(.2,.9,.2,1);
+  filter:drop-shadow(0 16px 30px rgba(0,0,0,.55))}
+.alert.in{transform:none}
+/* Start, Pause, Ende: rechts unten, damit der Titel frei bleibt */
+.alerts.r{left:auto;right:0;top:auto;bottom:110px}
+.alerts.r .alert{flex-direction:row-reverse;transform:translateX(110%)}
+.alerts.r .alert.in{transform:none}
+.alerts.r .a-side{padding:0 30px 0 18px}
+.alert .a-side{width:118px;display:flex;align-items:center;justify-content:center;background:var(--white);padding:0 18px 0 30px}
+.alert .a-side .vmark{width:72px}
+.alert.big .a-side{background:linear-gradient(135deg,var(--purple),var(--blue))}
+.alert .a-body{flex:1;padding:14px 30px 16px 24px;background:var(--panel)}
+.a-kind{font-family:"Barlow Condensed";font-weight:700;font-size:22px;letter-spacing:.24em;text-transform:uppercase;color:var(--green)}
+.alert.big .a-kind{color:#D27BFF}
+.a-name{font-family:"Barlow Condensed";font-weight:700;font-size:64px;line-height:1;text-transform:uppercase;transform:skewX(-10deg);transform-origin:0 100%;margin:4px 0 6px}
+.a-detail{font-family:"JetBrains Mono";font-size:22px;color:#D9DAE4}
+.a-msg{margin-top:8px;font-size:20px;line-height:1.4;color:#C9CAD6;max-width:640px}
+.a-sect{display:flex;gap:5px;margin-top:12px}
+.a-sect i{width:70px;height:6px;background:rgba(255,255,255,.12);position:relative;overflow:hidden}
+.a-sect i::after{content:"";position:absolute;inset:0;background:var(--green);transform:scaleX(0);transform-origin:0 50%;transition:transform .35s ease-out}
+.alert.big .a-sect i::after{background:var(--purple)}
+.alert.s1 .a-sect i:nth-child(1)::after,.alert.s2 .a-sect i:nth-child(-n+2)::after,.alert.s3 .a-sect i::after{transform:none}
+.alert.big.s3 .a-body{animation:purple 1s ease-out}
+@keyframes purple{0%{box-shadow:inset 0 0 0 3px var(--purple),0 0 50px rgba(179,3,248,.8)}100%{box-shadow:inset 0 0 0 0 transparent}}
+
+/* ---------- Übergang: Karbon-Wischer mit Zielflaggen-Kante und Startampel ---------- */
+#stg{position:absolute;inset:0;overflow:hidden}
+.ac-wipe{position:absolute;top:-120px;left:-420px;width:2760px;height:1320px;transform:skewX(-14deg) translateX(3200px);
+  animation:acWipe 1.95s both}
+.ac-wipe .body{position:absolute;inset:0 0 0 210px;background:
+  radial-gradient(900px 600px at 50% 50%, rgba(179,3,248,.35), transparent 70%),
+  repeating-linear-gradient(45deg, rgba(255,255,255,.035) 0 6px, transparent 6px 12px),
+  repeating-linear-gradient(-45deg, rgba(0,0,0,.4) 0 6px, transparent 6px 12px),#0B0B12}
+.ac-wipe .chk{position:absolute;left:0;top:0;bottom:0;width:210px;background:
+  conic-gradient(#fff 25%,#0A0A0A 0 50%,#fff 0 75%,#0A0A0A 0) 0 0/70px 70px}
+.ac-wipe .edge{position:absolute;left:210px;top:0;bottom:0;width:14px;background:linear-gradient(180deg,var(--purple),var(--blue))}
+.ac-wipe .tail{position:absolute;right:0;top:0;bottom:0;width:210px;background:conic-gradient(#fff 25%,#0A0A0A 0 50%,#fff 0 75%,#0A0A0A 0) 0 0/70px 70px}
+@keyframes acWipe{
+  0%{transform:skewX(-14deg) translateX(3200px);animation-timing-function:cubic-bezier(.3,0,.1,1)}
+  24%,66%{transform:skewX(-14deg) translateX(-160px);animation-timing-function:cubic-bezier(.6,0,.8,.4)}
+  100%{transform:skewX(-14deg) translateX(-3400px)}}
+.ac-lights{position:absolute;left:50%;top:180px;margin-left:-245px;display:flex;gap:20px;opacity:0;animation:acFade 1.95s both}
+.ac-lights i{width:82px;height:82px;border-radius:50%;background:#1A0606;box-shadow:inset 0 0 0 3px #2A0A0A}
+.ac-lights i{animation:acBulb 1.95s steps(1) both}
+.ac-lights i:nth-child(2){animation-name:acBulb2}.ac-lights i:nth-child(3){animation-name:acBulb3}
+.ac-lights i:nth-child(4){animation-name:acBulb4}.ac-lights i:nth-child(5){animation-name:acBulb5}
+@keyframes acBulb {0%,26%{background:#1A0606}27%,52%{background:var(--red);box-shadow:0 0 40px var(--red)}53%,100%{background:#1A0606}}
+@keyframes acBulb2{0%,30%{background:#1A0606}31%,52%{background:var(--red);box-shadow:0 0 40px var(--red)}53%,100%{background:#1A0606}}
+@keyframes acBulb3{0%,34%{background:#1A0606}35%,52%{background:var(--red);box-shadow:0 0 40px var(--red)}53%,100%{background:#1A0606}}
+@keyframes acBulb4{0%,38%{background:#1A0606}39%,52%{background:var(--red);box-shadow:0 0 40px var(--red)}53%,100%{background:#1A0606}}
+@keyframes acBulb5{0%,42%{background:#1A0606}43%,52%{background:var(--red);box-shadow:0 0 40px var(--red)}53%,100%{background:#1A0606}}
+@keyframes acFade{0%,22%{opacity:0}26%,64%{opacity:1}68%,100%{opacity:0}}
+.ac-mark{position:absolute;left:50%;top:50%;width:250px;margin:-90px 0 0 -125px;animation:acMark 1.95s both}
+@keyframes acMark{0%,64%{opacity:1}69%,100%{opacity:0}}
+.ac-word{position:absolute;left:0;right:0;top:780px;text-align:center;font-family:"Barlow Condensed";font-weight:700;font-size:54px;letter-spacing:.5em;
+  text-transform:uppercase;opacity:0;animation:acWord 1.95s both}
+@keyframes acWord{0%,30%{opacity:0;letter-spacing:.9em}40%,62%{opacity:1;letter-spacing:.5em}67%,100%{opacity:0}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+/*@CORE@*/
+
+/* =========================================================
+   Assetto Corsa: TV-Look mit Karbon, Startampel, Boxentafel, Zielflagge und Klassement.
+   Violett ist der schnellste Sektor – und die VOID-Farbe.
+   ========================================================= */
+const GAME='Assetto Corsa';
+const clockText=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+
+function carbon(){alertBox.classList.add('r');put(stage,'carbon');const s=put(stage,'streaks');
+  for(let i=0;i<9;i++){put(s,'streak','',`top:${rnd(80,1000)|0}px;animation-delay:-${rnd(0,2.6).toFixed(2)}s;animation-duration:${rnd(1.8,3.2).toFixed(2)}s`)}}
+
+function sessionBar(state){
+  const b=put(stage,'session');
+  const lg=el('div','logo');const im=el('img');im.src=MARK;im.alt='';lg.appendChild(im);
+  const ck=el('div','s-clock');ck.textContent=clockText();setInterval(()=>ck.textContent=clockText(),5000);
+  b.append(lg,el('div','s-name','Enter The Void'),el('div','s-state',state),el('div','s-live','<i></i>'+(SCENE==='end'?'Ende':'Live')),ck);
+  return b;
+}
+function headline(eyebrow,title,lines,every=5200){
+  const h=put(stage,'headline');
+  put(h,'h-eyebrow',eyebrow);
+  const t=put(h,'h-title');t.textContent=P.get('title')||title;
+  put(h,'h-rule','<i></i><i></i><i></i>');
+  const st=put(h,'h-status');
+  cycle(st,P.get('sub')?list('sub'):lines,every);
+  return h;
+}
+function infos(){
+  const def=TEST?{track:'Spa-Francorchamps',car:'BMW M4 GT3',series:'VOID Cup'}:{};
+  const rows=[['Strecke','track'],['Auto','car'],['Serie','series']].map(([k,p])=>[k,P.get(p)||def[p]]).filter(r=>r[1]);
+  if(!rows.length)return;
+  const box=put(stage,'infos');
+  rows.forEach(([k,v])=>{const d=put(box,'info');put(d,'k',k);const e=put(d,'v');e.textContent=v});
+}
+/* stilisierte Strecke (kein echtes Layout), ein Punkt fährt Runden */
+function trackmap(){
+  const d='M60,230 C60,120 120,60 220,70 L330,82 C390,90 400,140 360,160 C320,180 330,220 390,226 L460,232 C500,236 500,280 460,282 L110,284 C80,284 60,262 60,230Z';
+  const w=put(stage,'trackmap',`<svg viewBox="0 0 520 300" width="520" height="300"><defs><linearGradient id="tmg" x1="0" x2="1">
+    <stop offset="0" stop-color="#1FD06A"/><stop offset=".6" stop-color="#1FD06A"/><stop offset=".62" stop-color="#B303F8"/><stop offset="1" stop-color="#B303F8"/></linearGradient></defs>
+    <path class="base" d="${d}"/><path class="lit" d="${d}"/>
+    <circle r="9"><animateMotion dur="9s" repeatCount="indefinite" path="${d}"/></circle></svg>`);
+  return w;
+}
+function ticker(tag,src,every=7000){
+  const t=put(stage,'ticker');put(t,'t-tag',tag);const l=put(t,'t-line');put(t,'t-dom','void.cx');
+  cycle(l,src,every);
+}
+
+/* ---------- Szenen ---------- */
+function start(){
+  carbon();sessionBar('Stream startet');
+  headline('Session · Startaufstellung','Stream startet',['Reifen werden vorgewärmt','Setup wird geladen','Formationsrunde','Boxengasse offen','Gleich geht’s los']);
+  infos();
+  const g=put(stage,'gantry');const cols=[...Array(5)].map(()=>put(g,'col','<i class="bulb"></i><i class="bulb"></i>'));
+  const cap=put(stage,'gantry-cap');
+  const set=n=>cols.forEach((c,i)=>c.classList.toggle('on',i<n));
+  let out=false;
+  const lightsOut=()=>{set(0);cap.className='gantry-cap go';cap.textContent='Lights out'};
+  if(!countdown(s=>{
+      if(s>5){set(0);cap.className='gantry-cap';cap.innerHTML=`Live in <b>${mmss(s)}</b>`}
+      else if(s>0){set(6-s);cap.className='gantry-cap';cap.innerHTML=`Live in <b>${mmss(s)}</b>`}
+      else if(!out){out=true;lightsOut();setTimeout(()=>{cap.className='gantry-cap go';cap.textContent='Gleich live'},2500)}})){
+    /* ohne Countdown: Ampel geht im Wechsel an und aus */
+    (async()=>{for(;;){cap.className='gantry-cap';cap.textContent='Startvorgang';for(let n=1;n<=5;n++){set(n);await wait(900)}
+      await wait(rnd(500,1800));lightsOut();await wait(6500)}})();
+  }
+  trackmap();
+  ticker('Gleich live',()=>['Enter The Void · Gemeinschaft seit 2016','Discord und Server: void.cx',...latestLines()]);
+}
+
+function pause(){
+  carbon();sessionBar('Boxenstopp');
+  headline('Box, box','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines(),'Reifenwechsel läuft']);
+  const b=put(stage,'pitboard');
+  put(b,'pb-row y','Box');put(b,'pb-row','Pause');const t=put(b,'pb-row s','00:00');put(b,'pb-row p','VOID');
+  const t0=Date.now();setInterval(()=>t.textContent=mmss((Date.now()-t0)/1000|0),500);
+  infos();
+  const g=put(stage,'goals');g.style.cssText='position:absolute;right:170px;bottom:120px;width:520px';goalsInto(g);
+  ticker('Standzeit',()=>['Enter The Void','Discord und Server: void.cx',...latestLines()]);
+}
+
+function end(){
+  carbon();sessionBar('Zieleinlauf');
+  put(stage,'pole');const f=put(stage,'flag');
+  for(let i=0;i<14;i++){const n=el('i');n.style.animationDelay=`${(i*-.11).toFixed(2)}s`;f.appendChild(n)}
+  const h=headline('Zielflagge','Stream endet',()=>{const r=recapLines();return r.length?['Danke fürs Zuschauen',...r,'Bis zum nächsten Mal']:['Danke fürs Zuschauen','Bis zum nächsten Mal','Komm auf den Discord: void.cx']},4800);
+  h.style.top='180px';
+  const tw=put(stage,'tower');
+  const draw=()=>{
+    const s=supporters().slice(0,7);tw.innerHTML='';
+    if(!s.length){tw.style.display='none';return}tw.style.display='';
+    put(tw,'t-head','<span>Klassement</span><span>Heute</span>');
+    s.forEach((x,i)=>{const r=put(tw,'row'+(i===0?' p1':''),'',`animation-delay:${.15+i*.09}s`);
+      put(r,'pos',String(i+1));const bar=put(r,'bar');bar.style.background=readable('',x.user);
+      const n=put(r,'nm');n.textContent=x.user;const g=put(r,'gap');g.textContent=x.parts.join(' · ')});
+  };
+  let last='';onState(()=>{const k=JSON.stringify(STATE.session||{});if(k!==last){last=k;draw()}});
+  ticker('Zielflagge',['Danke fürs Zuschauen','Enter The Void · void.cx','Bis zum nächsten Rennen'],6000);
+}
+
+function chat(){
+  const cam={x:64,y:176,w:1248,h:702}, box={x:1360,y:176,w:496,h:702};
+  const OWN=P.get('chat')!=='0';
+  demoBox(cam,'Kamera');if(!OWN)demoBox(box,'Chat');
+  /* Karbon rundherum, Löcher für Kamera (und ggf. fremden Chat) */
+  const m=put(stage,'carbon');
+  const holes=[cam].concat(OWN?[]:[box]).map(r=>`${r.x}px ${r.y}px,${r.x+r.w}px ${r.y}px,${r.x+r.w}px ${r.y+r.h}px,${r.x}px ${r.y+r.h}px,${r.x}px ${r.y}px,0 0`).join(',');
+  m.style.clipPath=`polygon(evenodd,0 0,1920px 0,1920px 1080px,0 1080px,0 0,${holes})`;
+  put(stage,'camframe','',`left:${cam.x-3}px;top:${cam.y-3}px;width:${cam.w+6}px;height:${cam.h+6}px`);
+  const tag=put(stage,'camtag','<b><i></i>Onboard</b><span></span>',`left:${cam.x+18}px;top:${cam.y+18}px`);
+  cycle(tag.querySelector('span'),[P.get('title')||'Just Chatting','Enter The Void','void.cx'],20000);
+  if(OWN){
+    const rc=put(stage,'rc','',`left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px`);
+    put(rc,'rc-head','<span>Race Control</span><small>Chat</small>');
+    const log=put(rc,'chatlog');const t0=Date.now();
+    chatInto(log,{render:m=>{const t=el('span','m-time',mmss((Date.now()-t0)/1000|0));m.querySelector('.m-head').appendChild(t)}});
+  }else put(stage,'camframe','',`left:${box.x-3}px;top:${box.y-3}px;width:${box.w+6}px;height:${box.h+6}px`);
+  const hd=put(stage,'head2');const t=put(hd,'h-title');t.textContent=P.get('title')||'Just Chatting';
+  const rg=put(stage,'right-goals');const g=put(rg,'goals empty');goalsInto(g);
+  ticker('Live',()=>['Frag ruhig im Chat','Discord und Server: void.cx',...latestLines()],9000);
+}
+
+function game(){
+  const POS={rm:[1472,330],lm:[32,330],br:[1472,814],bl:[32,814],tr:[1472,32],tl:[32,32]};
+  const pos=(P.get('cam')||'rm').toLowerCase();
+  demoBox({x:0,y:0,w:1920,h:1080},'Spielbild','linear-gradient(170deg,#3a4250,#1b1f27 55%,#2a2a2e)');
+  if(pos==='off'||!POS[pos])return;
+  const [x,y]=POS[pos],W=416,H=234;
+  demoBox({x,y,w:W,h:H},'Kamera');
+  put(stage,'camframe','',`left:${x-3}px;top:${y-3}px;width:${W+6}px;height:${H+6}px`);
+  const tag=put(stage,'camtag','<b><i></i>Onboard</b><span></span>',`left:${x}px;top:${y+H+12}px`);
+  cycle(tag.querySelector('span'),list('sub',[P.get('title')||'Enter The Void','void.cx']),30000);
+  if(P.get('goals')!=='0'){
+    const hud=put(stage,'hud','',`left:${x}px;width:${W}px;`+(pos[0]==='t'||pos[1]==='m'?`top:${y+H+60}px`:`bottom:${1080-y+16}px`));
+    const lb=put(hud,'goals empty');latestInto(lb);const g=put(hud,'goals empty');goalsInto(g);
+  }
+}
+
+/* ---------- Alert ---------- */
+async function alert(e,a){
+  const box=el('div','alert'+(a.big?' big':''));
+  const side=put(box,'a-side');side.appendChild(makeMark({d:250,t:520,mono:a.big?'#fff':null}));
+  const b=put(box,'a-body');
+  put(b,'a-kind',a.kind);const n=put(b,'a-name');n.textContent=a.name;
+  const d=put(b,'a-detail');d.textContent=a.detail;
+  if(e.text){const m=put(b,'a-msg');m.textContent=e.text}
+  put(b,'a-sect','<i></i><i></i><i></i>');
+  alertBox.appendChild(box);
+  await wait(40);box.classList.add('in');a.sound();
+  for(let i=1;i<=3;i++){await wait(260);box.classList.add('s'+i)}
+  await a.hold();
+  box.classList.remove('in');await wait(650);box.remove();
+}
+
+/* ---------- Übergang ---------- */
+function stinger(root){
+  const w=el('div','ac-wipe');w.append(el('div','chk'),el('div','body'),el('div','edge'),el('div','tail'));root.appendChild(w);
+  put(root,'ac-lights','<i></i><i></i><i></i><i></i><i></i>');
+  const m=makeMark({cls:'ac-mark',d:520,t:420});root.appendChild(m);
+  put(root,'ac-word','Enter The Void');
+}
+
+boot({start,pause,end,chat,game,stinger},{alert,samples:{chat:['Guten Abend zusammen!','Welche Strecke heute?','Spa im Regen, mutig','Purple Sector!','Wie viel Reifendruck fährst du?','GG, sauberer Start','Fahr die Eau Rouge voll!']}});
+</script>
+</body>
+</html>

@@ -15,9 +15,12 @@ OBS-Szenen-Packs für Enter The Void plus **VOID Studio** – ein OBS-Skript, da
 | Pfad | Inhalt |
 | --- | --- |
 | `studio/void-studio.py` | VOID Studio (Pack-Manager + Bridge) |
-| `build/tpl.html` | Kern aller Szenen; die Themes entstehen über `make_*.py` daraus |
-| `build/make_*.py` | ein Generator pro Theme (Wardogs, Minecraft, ETS2, GTA, VOID); AION 2 nutzt `tpl.html` direkt |
-| `build/packs.py` | baut die Pack-Ordner inklusive OBS-Vorlage und `pack.json` |
+| `build/themes/<id>.json` | eine Beschreibung pro Pack: Name, Template, Szenen, Kamera, Schriften, Vorschauen, LIESMICH-Texte (Felder in `build/themes.py`) |
+| `build/themes/<id>/scenes.html` | eigenes Template eines Packs (Assetto Corsa, Indie, IRL); `/*@CORE@*/` wird durch `build/core/core.js` ersetzt |
+| `build/core/core.js` | gemeinsamer Kern für eigene Templates: Bridge, Alert-Warteschlange, Chat, Ziele, Rückblick, Testdaten, Bildmarke |
+| `build/tpl.html` | Template der älteren Packs; Wardogs, Minecraft, ETS2, GTA und VOID entstehen über `make_*.py` daraus, AION 2 nutzt es direkt |
+| `build/packs.py` | baut die Pack-Ordner inklusive OBS-Vorlage und `pack.json` (Layout `game` oder `irl`) |
+| `build/readme.py` | LIESMICH.md pro Pack aus der Beschreibung, eigenes Kapitel aus `build/themes/<id>.md` |
 | `build/stg.py` / `prev_packs.py` | rendert Übergänge (WebM mit Alpha) und Vorschaubilder |
 | `build/versions.json` | Versionen pro Pack und Studio; Packs unter `hold` landen nicht im Release |
 | `build/font/` | eigene VOID-Schriften: VOID Runes (nur AION 2) und VOID Latin |
@@ -36,6 +39,8 @@ Ablauf für ein Update: Änderung machen, Version des Packs (und bei Studio-Änd
 
 Ohne Versionssprung gibt es kein Release, damit VOID Studio keine Schein-Updates meldet. Lokal geht es weiterhin mit `pip install -r build/requirements.txt`, `build/build.sh` und `build/publish.sh`.
 Einzelnes Pack bauen: `build/build.sh wardogs`.
+
+Neues Pack: `build/themes/<id>.json` anlegen (eine bestehende Beschreibung kopieren), Template unter `build/themes/<id>/scenes.html` mit `"core": true` (Vorlage: eines der drei eigenen Templates), Version in `versions.json`. Build, Prüfung, Vorschauen, Übergang und LIESMICH richten sich danach; `python3 build/themes/fmt.py` formatiert die Beschreibungen.
 
 Die Theme-Anleitung (Regeln, Aufbau, Beispiel) liegt als Claude-Doc vor und sollte als `docs/THEMES.md` ins Repo exportiert werden.
 

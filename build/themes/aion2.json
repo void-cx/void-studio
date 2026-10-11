@@ -1,0 +1,29 @@
+{
+  "id": "aion2",
+  "order": 1,
+  "label": "AION 2",
+  "game": "AION 2",
+  "generator": null,
+  "template": "tpl.html",
+  "layout": "game",
+  "cam": [1472, 814],
+  "scenes": ["start", "pause", "end", "chat", "game"],
+  "fonts": {
+    "__RUNES__": ["void-runes.woff2", "font/VOIDRunes-Regular.woff2"],
+    "__LATIN__": ["void-latin.woff2", "font/VOIDLatin-Regular.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7500],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["end", "scene=end&test=1", 16500]
+  ],
+  "readme": {
+    "stinger": "Ein Aether-Portal öffnet sich, Federn brechen aus, Runenkranz und Lichtschwingen entfalten sich um die Bildmarke, raus geht es mit einem Teleport-Blitz"
+  }
+}

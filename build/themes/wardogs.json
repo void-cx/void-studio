@@ -1,0 +1,33 @@
+{
+  "id": "wardogs",
+  "order": 6,
+  "label": "Wardogs",
+  "game": "Wardogs",
+  "generator": "make_wd.py",
+  "template": "tpl_wardogs.html",
+  "layout": "game",
+  "cam": [1472, 330],
+  "scenes": ["start", "pause", "end", "chat", "game"],
+  "fonts": {
+    "__BC5__": ["barlow-condensed-500.woff2", "fontsource-barlow-condensed-5.3.0/files/barlow-condensed-latin-500-normal.woff2"],
+    "__BC7__": ["barlow-condensed-700.woff2", "fontsource-barlow-condensed-5.3.0/files/barlow-condensed-latin-700-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "barlow-condensed": "fontsource-barlow-condensed-5.3.0",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7500],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["end", "scene=end&test=1", 16500]
+  ],
+  "readme": {
+    "stinger": "Eine schräge Lagekarte wischt durchs Bild, die Bildmarke baut sich auf und stört kurz wie ein Funksignal",
+    "cam": "rechts mittig (unten rechts liegt das Waffen-HUD)"
+  }
+}

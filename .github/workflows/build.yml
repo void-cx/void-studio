@@ -38,7 +38,7 @@ jobs:
         run: python -m py_compile ../studio/void-studio.py
       - name: Packs bauen
         run: |
-          for t in wd mc ets gta void; do python make_$t.py; done
+          for g in $(python themes.py generators); do python "$g"; done
           python packs.py
       - name: Alle Szenen im Browser prüfen
         run: python smoke.py

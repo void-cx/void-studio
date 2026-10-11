@@ -1,5 +1,6 @@
 """Release bauen: Pack-Zips, void-studio.py, index.json (Versionen + SHA-256), CHANGELOG – fertig für ein GitHub-Release."""
 import hashlib, json, os, shutil, zipfile, time
+import themes
 PACKS='dist/packs'; OUT='dist/release'
 shutil.rmtree(OUT,ignore_errors=True); os.makedirs(OUT)
 V=json.load(open('versions.json'))
@@ -14,7 +15,8 @@ for d in sorted(os.listdir(PACKS)):
             for f in files:
                 full=os.path.join(root,f); z.write(full,os.path.join(d,os.path.relpath(full,src)))
     # Vorschaubilder zusätzlich einzeln im Release, damit das Portal sie zeigen kann (VOID Studio → Szenen für OBS)
-    order=['start','chat','game','drive','end']; prev=os.path.join(src,'preview'); previews=[]
+    # Reihenfolge wie in themes/<id>.json
+    order=[p[0] for t in themes.load([man['id']]) for p in t['previews']]; prev=os.path.join(src,'preview'); previews=[]
     for f in sorted(os.listdir(prev) if os.path.isdir(prev) else [],key=lambda f:(order.index(f[:-4]) if f[:-4] in order else 99,f)):
         if f.endswith('.jpg'):
             shutil.copy(os.path.join(prev,f),os.path.join(OUT,f'{d}-{f}')); previews.append({'scene':f[:-4],'file':f'{d}-{f}'})

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<!--
+  VOID IRL · OBS-Szenenset für unterwegs, eine bis vier Kameras – Browserquelle 1920 × 1080, eigene Framerate 60
+
+  In OBS als „Lokale Datei“ die passende Einstiegsdatei aus obs/ wählen. Parameter dort anhängen (#…&…).
+
+  ?scene=start     Stream startet        Höhenlinien-Karte; &min=5 Countdown
+  ?scene=solo      Unterwegs             eine Kamera formatfüllend, HUD mit Uhr, Ort, Wetter, Chat
+  ?scene=duo       Zwei Kameras          nebeneinander (x 24 / 968, y 279, je 928 × 522)
+  ?scene=pip       Bild im Bild          Kamera 1 voll, Kamera 2 oben rechts (x 1432 y 48 440 × 248)
+  ?scene=quad      Vier Kameras          2 × 2, je 960 × 540
+  ?scene=chat      Just Chatting         Kamera-Loch x 64 y 176 1248 × 702, Chat rechts
+  ?scene=pause     Kurze Pause
+  ?scene=signal    Verbindung weg        VOID Studio schaltet bei einem Abbruch selbst hierher und zurück
+  ?scene=end       Stream endet
+  ?scene=alerts    nur Alerts            ?scene=goals  nur Ziele        ?scene=stinger  Vorschau des Übergangs
+
+  Für unterwegs:
+    &place=Hamburg%20·%20Speicherstadt   Ort im HUD          &lat=53.54&lon=9.99   Wetter von Open-Meteo (alle 10 Minuten)
+    &cam1=Hauptkamera&cam2=Helm …        Namen an den Kameras (Mehrkamera-Szenen)
+    &chatlife=25                         Sekunden, bis eine Chatnachricht im HUD verschwindet (0 = bleibt)
+    &hud=0                               nur Alerts, kein HUD     &clock=0  ohne Uhr
+  Optional: &title=…  &sub=A|B|C  &alerts=0  &goals=0  &test=1  &demo=1  &bridge=0  &port=8787  &host=…
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOID IRL · Szenen</title>
+<style>
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(data:font/woff2;base64,__SG4__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:700;src:url(data:font/woff2;base64,__SG7__) format("woff2");font-display:block}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(data:font/woff2;base64,__JB5__) format("woff2");font-display:block}
+:root{
+  --night:#07071A; --glass:rgba(8,8,24,.72); --glass2:rgba(8,8,24,.86); --line:rgba(255,255,255,.12);
+  --white:#F2F3FA; --mute:#A3A6C2; --violet:#B303F8; --blue:#1141E4; --lilac:#D27BFF; --sky:#7C9BFF; --red:#FF3B4E; --green:#3BE39A;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:"Space Grotesk",system-ui,sans-serif;color:var(--white);-webkit-font-smoothing:antialiased}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden}
+.mono{font-family:"JetBrains Mono",monospace;font-variant-numeric:tabular-nums}
+svg.ic{width:1em;height:1em;flex-shrink:0}
+
+/* ---------- Höhenlinien-Karte ---------- */
+.topo{position:absolute;inset:0;background:radial-gradient(1000px 700px at 15% 10%,rgba(179,3,248,.22),transparent 70%),
+  radial-gradient(1000px 700px at 100% 100%,rgba(17,65,228,.26),transparent 70%),var(--night)}
+.topo svg{position:absolute;inset:0}
+.topo .hill{animation:drift 40s ease-in-out infinite alternate;transform-box:fill-box;transform-origin:center}
+.topo .hill:nth-child(2n){animation-duration:55s;animation-direction:alternate-reverse}
+@keyframes drift{to{transform:rotate(14deg) scale(1.06)}}
+.topo .grid{stroke:rgba(255,255,255,.04);stroke-width:1}
+.route{fill:none;stroke:url(#rg);stroke-width:5;stroke-linecap:round;stroke-dasharray:14 16;animation:dash 3s linear infinite}
+@keyframes dash{to{stroke-dashoffset:-60}}
+.pin{animation:pin 2.4s ease-in-out infinite}
+@keyframes pin{50%{transform:translateY(-10px)}}
+
+/* ---------- Vollbild-Titel ---------- */
+.hero{position:absolute;left:120px;top:300px;width:1100px}
+.hero .eb{font-family:"JetBrains Mono";font-size:26px;color:var(--lilac);letter-spacing:.06em;margin-bottom:12px}
+.hero .t{font-weight:700;font-size:140px;line-height:.95;letter-spacing:-.03em;animation:rise .9s cubic-bezier(.2,.9,.2,1) both}
+.hero .st{margin-top:26px;font-weight:500;font-size:44px;color:var(--white);min-height:56px}
+.hero .ct{margin-top:18px;font-family:"JetBrains Mono";font-size:36px;color:var(--sky)}
+@keyframes rise{from{opacity:0;transform:translateY(50px)}}
+.sw{display:inline-block;transition:opacity .4s,transform .4s cubic-bezier(.2,.9,.2,1)}
+.sw.out{opacity:0;transform:translateY(-18px)}
+.sw.in{opacity:0;transform:translateY(18px);transition:none}
+.heromark{position:absolute;right:200px;top:250px;width:380px}
+
+/* ---------- HUD-Pillen ---------- */
+.chips{position:absolute;display:flex;gap:10px;align-items:center}
+.chip{display:flex;align-items:center;gap:10px;height:52px;padding:0 20px;border-radius:26px;background:var(--glass);
+  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border:1px solid var(--line);font-weight:500;font-size:24px;white-space:nowrap}
+.chip.live{background:linear-gradient(135deg,var(--violet),var(--blue));border:0;font-weight:700;letter-spacing:.08em}
+.chip.live i{width:12px;height:12px;border-radius:50%;background:#fff;animation:blink 1.2s steps(2) infinite}
+.chip.off{background:var(--red);border:0}
+.chip .mono{font-size:24px}
+.chip svg{font-size:24px;color:var(--lilac)}
+.chip:empty,.chip.hidden{display:none}
+@keyframes blink{50%{opacity:.3}}
+.brand{position:absolute;right:40px;bottom:36px;display:flex;align-items:center;gap:10px;font-family:"JetBrains Mono";font-size:20px;color:var(--white);
+  opacity:.85;text-shadow:0 2px 8px rgba(0,0,0,.6)}
+.brand img{height:30px}
+
+/* ---------- Kamera-Namen und Rahmen ---------- */
+.ctag{position:absolute;display:flex;align-items:center;gap:8px;height:38px;padding:0 16px;border-radius:19px;background:var(--glass2);
+  font-weight:700;font-size:19px;letter-spacing:.04em}
+.ctag b{display:inline-block;min-width:24px;height:24px;border-radius:12px;background:linear-gradient(135deg,var(--violet),var(--blue));font-size:15px;line-height:24px;text-align:center}
+.tile{position:absolute;border-radius:6px;box-shadow:0 0 0 3px rgba(255,255,255,.85),0 18px 40px rgba(0,0,0,.45)}
+.divider{position:absolute;background:var(--night)}
+
+/* ---------- Chat-Blasen (verschwinden nach &chatlife Sekunden) ---------- */
+.bubbles{position:absolute;left:40px;bottom:36px;width:620px;display:flex;flex-direction:column;justify-content:flex-end;gap:8px}
+.msg{align-self:flex-start;max-width:100%;padding:10px 16px 11px;border-radius:18px 18px 18px 6px;background:var(--glass2);border-left:4px solid var(--uc,var(--lilac));
+  animation:pop .4s cubic-bezier(.3,1.4,.5,1) both;transition:opacity .9s,transform .9s}
+.msg.fade{opacity:0;transform:translateX(-30px)}
+@keyframes pop{from{opacity:0;transform:translateY(20px) scale(.92)}}
+.m-head{display:inline-flex;align-items:center;gap:6px;margin-right:8px;vertical-align:1px}
+.m-badge{width:18px;height:18px}
+.m-name{font-weight:700;font-size:21px}
+.m-text{display:inline;font-size:21px;line-height:1.4;overflow-wrap:anywhere}
+.m-emote{height:26px;vertical-align:-6px;margin:0 2px}
+.chatpanel{position:absolute;display:flex;flex-direction:column;padding:16px 4px 4px;border-radius:14px;background:var(--glass2);border:1px solid var(--line)}
+.chatpanel .h{padding:0 18px 10px;font-family:"JetBrains Mono";font-size:18px;color:var(--mute)}
+.chatpanel .log{flex:1;display:flex;flex-direction:column;justify-content:flex-end;gap:8px;overflow:hidden;padding:0 12px 12px;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 90px);mask-image:linear-gradient(180deg,transparent,#000 90px)}
+.chatpanel .msg{flex-shrink:0}
+
+/* ---------- Ziele kompakt ---------- */
+.goals{display:flex;flex-direction:column;gap:8px}
+.goal{padding:10px 16px 12px;border-radius:14px;background:var(--glass)}
+.g-top{display:flex;justify-content:space-between;gap:12px;margin-bottom:8px;font-size:18px}
+.g-l{color:var(--mute);font-weight:500}.g-v{font-family:"JetBrains Mono";font-size:17px}
+.g-track{position:relative;height:6px;border-radius:3px;background:rgba(255,255,255,.12);overflow:hidden}
+.g-fill{position:absolute;inset:0;background:linear-gradient(90deg,var(--violet),var(--sky))}
+.goal.full .g-fill{background:var(--green)}
+.goal.lt .g-top{margin:0}
+.goal.lt .g-v{font-family:"Space Grotesk";font-weight:700;color:var(--white);max-width:60%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.hudgoals{position:absolute;right:40px;bottom:90px;width:360px}
+
+/* ---------- Verbindung weg ---------- */
+.bars{position:absolute;right:240px;top:330px;display:flex;align-items:flex-end;gap:22px;height:300px}
+.bars i{width:60px;border-radius:10px;background:rgba(255,255,255,.12)}
+.bars i:nth-child(1){height:25%}.bars i:nth-child(2){height:50%}.bars i:nth-child(3){height:75%}.bars i:nth-child(4){height:100%}
+.bars i{animation:scan 2.4s ease-in-out infinite}
+.bars i:nth-child(2){animation-delay:.2s}.bars i:nth-child(3){animation-delay:.4s}.bars i:nth-child(4){animation-delay:.6s}
+@keyframes scan{0%,60%,100%{background:rgba(255,255,255,.12)}20%{background:linear-gradient(180deg,var(--lilac),var(--violet))}}
+.bars.back i{animation:none;background:var(--green)}
+.since{position:absolute;right:240px;top:660px;width:330px;text-align:center;font-family:"JetBrains Mono";font-size:30px;color:var(--mute)}
+
+/* ---------- Alerts: Pille fällt oben in die Mitte ---------- */
+.alerts{position:absolute;left:0;right:0;top:108px;display:flex;justify-content:center;z-index:20;pointer-events:none}
+.alert{display:flex;align-items:center;gap:20px;padding:14px 34px 14px 16px;border-radius:44px;background:var(--glass2);border:1px solid var(--line);
+  box-shadow:0 18px 40px rgba(0,0,0,.45);transform:translateY(-160%);transition:transform .55s cubic-bezier(.3,1.3,.5,1);max-width:1100px}
+.alert.in{transform:none}
+.alert.big{background:linear-gradient(135deg,rgba(179,3,248,.95),rgba(17,65,228,.95));border:0}
+.alert .ring{width:64px;height:64px;border-radius:50%;background:#fff;padding:11px;flex-shrink:0}
+.a-kind{font-family:"JetBrains Mono";font-size:18px;color:var(--lilac)}
+.alert.big .a-kind{color:#fff}
+.a-name{font-weight:700;font-size:40px;line-height:1.05}
+.a-detail{font-size:22px;color:var(--mute)}
+.alert.big .a-detail{color:#E9E6FF}
+.a-msg{font-size:20px;margin-top:4px;max-width:820px}
+.a-row{display:flex;align-items:baseline;gap:14px}
+
+/* ---------- Übergang: Karte öffnet sich kreisförmig aus einer Stecknadel ---------- */
+#stg{position:absolute;inset:0;overflow:hidden}
+.ir-map{position:absolute;inset:0;clip-path:circle(0 at 50% 62%);animation:irOpen 1.95s both}
+@keyframes irOpen{0%{clip-path:circle(0 at 50% 62%);animation-timing-function:cubic-bezier(.5,0,.2,1)}25%,66%{clip-path:circle(1500px at 50% 62%);animation-timing-function:cubic-bezier(.7,0,.6,1)}
+  92%,100%{clip-path:circle(0 at 50% 62%)}}
+.ir-pin{position:absolute;left:50%;top:62%;width:90px;height:120px;margin:-120px 0 0 -45px;animation:irPin 1.95s both}
+@keyframes irPin{0%{opacity:0;transform:translateY(-500px)}10%{opacity:1;transform:none;animation-timing-function:ease-out}14%{transform:scaleY(.82)}
+  18%,86%{opacity:1;transform:none}96%,100%{opacity:0;transform:translateY(-60px)}}
+.ir-mark{position:absolute;left:50%;top:40%;width:240px;margin:-120px 0 0 -120px;animation:irMark 1.95s both}
+@keyframes irMark{0%,64%{opacity:1}69%,100%{opacity:0}}
+.ir-word{position:absolute;left:0;right:0;top:600px;text-align:center;font-family:"JetBrains Mono";font-size:30px;color:var(--lilac);opacity:0;animation:irWord 1.95s both}
+@keyframes irWord{0%,28%{opacity:0;transform:translateY(20px)}36%,62%{opacity:1;transform:none}67%,100%{opacity:0}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+/*@CORE@*/
+
+/* =========================================================
+   IRL: Höhenlinien-Karte, Reise-HUD mit Uhr, Ort und Wetter, Mehrkamera-Layouts,
+   „Verbindung weg“ mit Live-Zähler (VOID Studio meldet Abbruch und Rückkehr per {type:'irl'}).
+   ========================================================= */
+const ICON={
+  pin:'<svg class="ic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a7 7 0 0 0-7 7c0 5.2 7 13 7 13s7-7.8 7-13a7 7 0 0 0-7-7Zm0 9.6A2.6 2.6 0 1 1 12 6.4a2.6 2.6 0 0 1 0 5.2Z"/></svg>',
+  clock:'<svg class="ic" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3.5 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
+  sky:'<svg class="ic" viewBox="0 0 24 24"><path fill="currentColor" d="M7 18a5 5 0 0 1-.6-10A6 6 0 0 1 18 9.5 4.3 4.3 0 0 1 17.5 18Z"/></svg>',
+};
+const WX=c=>c===0?'klar':c<=1?'überwiegend klar':c===2?'teils bewölkt':c===3?'bewölkt':c<=48?'Nebel':c<=57?'Niesel':c<=67?'Regen':c<=77?'Schnee':c<=82?'Schauer':c<=86?'Schneeschauer':'Gewitter';
+const place=()=>P.get('place')||(TEST?'Hamburg · Speicherstadt':'');
+const clockText=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+
+/* Wetter: nur mit &lat/&lon, Open-Meteo braucht keinen Schlüssel */
+const WEATHER={text:'',hooks:[]};
+function weather(){
+  const lat=parseFloat(P.get('lat')),lon=parseFloat(P.get('lon'));
+  if(TEST&&!(lat&&lon)){WEATHER.text='14 °C · teils bewölkt';return}
+  if(!(isFinite(lat)&&isFinite(lon))||P.get('lat')===null)return;
+  const load=()=>fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code`)
+    .then(r=>r.json()).then(j=>{const c=j.current||{};WEATHER.text=`${Math.round(c.temperature_2m)} °C · ${WX(c.weather_code)}`;WEATHER.hooks.forEach(f=>f())}).catch(()=>{});
+  load();setInterval(load,600000);
+}
+weather();
+
+function chips(target,{live=true}={}){
+  const c=put(target,'chips');
+  if(live)put(c,'chip live','<i></i>LIVE');
+  if(P.get('clock')!=='0'){const k=put(c,'chip',ICON.clock+'<span class="mono"></span>');const s=k.querySelector('span');
+    const f=()=>s.textContent=clockText();f();setInterval(f,5000)}
+  if(place()){const k=put(c,'chip',ICON.pin+'<span></span>');k.querySelector('span').textContent=place()}
+  const w=put(c,'chip hidden',ICON.sky+'<span></span>');
+  const fw=()=>{w.querySelector('span').textContent=WEATHER.text;w.classList.toggle('hidden',!WEATHER.text)};fw();WEATHER.hooks.push(fw);
+  return c;
+}
+function brand(){const b=put(stage,'brand');const i=el('img');i.src=MARK;i.alt='';b.append(i,document.createTextNode('void.cx'))}
+
+/* Höhenlinien: verzerrte Ringe um ein paar Hügel, dazu eine gestrichelte Route mit Stecknadel */
+function contours(target,{route=true}={}){
+  const t=put(target,'topo');
+  const hills=[[300,260,9],[1500,220,8],[980,760,10],[1780,900,6],[150,950,6]];
+  let h='';
+  hills.forEach(([cx,cy,n],k)=>{
+    let g='';
+    for(let i=1;i<=n;i++){const R=i*46,ph=k*1.7+i*.3;let d='';
+      for(let a=0;a<=64;a++){const th=a/64*Math.PI*2,r=R*(1+.14*Math.sin(3*th+ph)+.07*Math.sin(5*th-ph*1.3));
+        d+=(a?'L':'M')+(cx+Math.cos(th)*r).toFixed(1)+','+(cy+Math.sin(th)*r*.8).toFixed(1)}
+      g+=`<path d="${d}Z" fill="none" stroke="${i%4===0?'rgba(210,123,255,.30)':'rgba(124,155,255,.14)'}" stroke-width="${i%4===0?2:1.3}"/>`}
+    h+=`<g class="hill">${g}</g>`;
+  });
+  const rd='M-40,880 C260,760 420,980 700,820 S1100,520 1300,600 S1640,700 1760,430';
+  t.innerHTML=`<svg viewBox="0 0 1920 1080" width="1920" height="1080"><defs><linearGradient id="rg" x1="0" x2="1"><stop offset="0" stop-color="#B303F8"/><stop offset="1" stop-color="#7C9BFF"/></linearGradient></defs>
+    ${h}${route?`<path class="route" d="${rd}"/><g transform="translate(1760,430)"><g class="pin"><path d="M0,0 C-26,-36 -30,-48 -30,-62 a30,30 0 1,1 60,0 C30,-48 26,-36 0,0Z" fill="url(#rg)"/><circle cy="-62" r="11" fill="#07071A"/></g></g>`:''}</svg>`;
+  return t;
+}
+function hero(eyebrow,title,lines,every=5200){
+  const h=put(stage,'hero');put(h,'eb',eyebrow);
+  const t=put(h,'t');t.textContent=P.get('title')||title;
+  const st=put(h,'st');cycle(st,P.get('sub')?list('sub'):lines,every);
+  return h;
+}
+
+/* ---------- Vollbild-Szenen ---------- */
+function start(){
+  contours(stage);chips(stage,{live:false}).style.cssText='left:120px;top:80px';
+  const h=hero('// enter the void · irl','Stream startet',()=>[place()?`Unterwegs in ${place()}`:'Gleich geht’s raus','Akku geladen','Netz wird gesucht','Kamera läuft warm','Gleich geht’s los']);
+  const ct=put(h,'ct');countdown(s=>ct.textContent=s>0?`Live in ${mmss(s)}`:'Gleich live');
+  const m=makeMark({cls:'heromark',d:400,t:800});stage.appendChild(m);
+}
+function pause(){
+  contours(stage);chips(stage).style.cssText='left:120px;top:80px';
+  hero('// kurz durchatmen','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines()]);
+  const m=makeMark({cls:'heromark',d:300,t:800});stage.appendChild(m);
+  const g=put(stage,'goals','','position:absolute;left:120px;bottom:90px;width:460px');goalsInto(g);
+}
+function end(){
+  contours(stage);chips(stage,{live:false}).style.cssText='left:120px;top:80px';
+  hero('// angekommen','Stream endet',()=>{const r=recapLines();return r.length?['Danke fürs Mitkommen',...r,'Bis zum nächsten Mal']:['Danke fürs Mitkommen','Bis zum nächsten Mal','Komm auf den Discord: void.cx']},4800);
+  const m=makeMark({cls:'heromark',d:300,t:800});stage.appendChild(m);
+}
+function signal(){
+  contours(stage,{route:false});chips(stage).style.cssText='left:120px;top:80px';
+  const h=hero('// signal verloren','Verbindung weg',['Das Netz wackelt','Wir sind gleich wieder da','Chat bleibt offen',...latestLines()],4500);
+  const bars=put(stage,'bars','<i></i><i></i><i></i><i></i>');
+  const since=put(stage,'since');
+  let t0=Date.now(),back=false;
+  const tick=()=>{if(!back)since.textContent='weg seit '+mmss((Date.now()-t0)/1000|0)};tick();setInterval(tick,500);
+  onIrl(e=>{
+    if(e.since)t0=e.since*1000;
+    back=!!e.live;bars.classList.toggle('back',back);
+    if(back){since.textContent='Signal ist zurück';swap(h.querySelector('.t'),'Gleich wieder da')}
+  });
+}
+
+/* ---------- Kamera-Szenen ---------- */
+function hud({chat=true,goals=true}={}){
+  if(P.get('hud')==='0')return;
+  chips(stage).style.cssText='left:40px;top:36px';
+  brand();
+  if(chat){const life=parseFloat(P.get('chatlife')??25);const b=put(stage,'bubbles');chatInto(b,{max:5,life:life>0?life*1000:0})}
+  if(goals&&P.get('goals')!=='0'){const g=put(stage,'goals hudgoals empty');goalsInto(g)}
+}
+const camName=i=>P.get('cam'+i)||(TEST?['Hauptkamera','Helmkamera','Rückkamera','Totale'][i-1]:'');
+function tag(i,x,y){const n=camName(i);if(!n)return;const t=put(stage,'ctag',`<b>${i}</b><span></span>`,`left:${x}px;top:${y}px`);t.querySelector('span').textContent=n}
+const CAMBG=['linear-gradient(160deg,#4b6a8a,#1c2a3a 60%,#3a2a4a)','linear-gradient(160deg,#6a5a3a,#2a2318 60%,#1c2a3a)','linear-gradient(160deg,#3a6a5a,#18302a 60%,#2a1c3a)','linear-gradient(160deg,#6a3a5a,#2a1828 60%,#1c243a)'];
+
+function solo(){demoBox({x:0,y:0,w:1920,h:1080},'Kamera 1',CAMBG[0]);hud()}
+function duo(){
+  const T=[[24,279],[968,279]];
+  T.forEach(([x,y],i)=>demoBox({x,y,w:928,h:522},'Kamera '+(i+1),CAMBG[i]));
+  const bg=contours(stage,{route:false});
+  bg.style.clipPath=`polygon(evenodd,0 0,1920px 0,1920px 1080px,0 1080px,0 0,${T.map(([x,y])=>`${x}px ${y}px,${x+928}px ${y}px,${x+928}px ${y+522}px,${x}px ${y+522}px,${x}px ${y}px,0 0`).join(',')})`;
+  T.forEach(([x,y],i)=>{put(stage,'tile','',`left:${x}px;top:${y}px;width:928px;height:522px`);tag(i+1,x+16,y+16)});
+  hud();
+}
+function pip(){
+  demoBox({x:0,y:0,w:1920,h:1080},'Kamera 1',CAMBG[0]);demoBox({x:1432,y:48,w:440,h:248},'Kamera 2',CAMBG[1]);
+  put(stage,'tile','','left:1432px;top:48px;width:440px;height:248px');tag(2,1448,310);tag(1,40,100);
+  hud();
+}
+function quad(){
+  [[0,0],[960,0],[0,540],[960,540]].forEach(([x,y],i)=>{demoBox({x,y,w:960,h:540},'Kamera '+(i+1),CAMBG[i])});
+  put(stage,'divider','','left:957px;top:0;width:6px;height:1080px');put(stage,'divider','','left:0;top:537px;width:1920px;height:6px');
+  [[0,0],[960,0],[0,540],[960,540]].forEach(([x,y],i)=>tag(i+1,x+(i%2?24:24),y+(i<2?100:24)));
+  hud({chat:true,goals:false});
+}
+function chat(){
+  const cam={x:64,y:176,w:1248,h:702}, box={x:1360,y:176,w:496,h:702};
+  const OWN=P.get('chat')!=='0';
+  demoBox(cam,'Kamera 1',CAMBG[0]);if(!OWN)demoBox(box,'Chat');
+  const bg=contours(stage,{route:false});
+  const hole=r=>`${r.x}px ${r.y}px,${r.x+r.w}px ${r.y}px,${r.x+r.w}px ${r.y+r.h}px,${r.x}px ${r.y+r.h}px,${r.x}px ${r.y}px,0 0`;
+  bg.style.clipPath=`polygon(evenodd,0 0,1920px 0,1920px 1080px,0 1080px,0 0,${[hole(cam)].concat(OWN?[]:[hole(box)]).join(',')})`;
+  put(stage,'tile','',`left:${cam.x}px;top:${cam.y}px;width:${cam.w}px;height:${cam.h}px`);
+  chips(stage).style.cssText='left:64px;top:80px';
+  if(OWN){const cp=put(stage,'chatpanel','',`left:${box.x}px;top:${box.y}px;width:${box.w}px;height:${box.h}px`);put(cp,'h','// chat');
+    const log=put(cp,'log');chatInto(log,{max:30})}
+  const g=put(stage,'goals','','position:absolute;right:64px;top:80px;width:496px;flex-direction:row');goalsInto(g);
+  [...g.children].forEach(c=>c.style.flex='1');
+  brand();
+}
+
+/* ---------- Alert ---------- */
+async function alert(e,a){
+  const box=el('div','alert'+(a.big?' big':''));
+  const r=put(box,'ring');r.appendChild(makeMark({cls:'noglow',d:250,t:520}));
+  const b=put(box,'');put(b,'a-kind',a.kind);
+  const row=put(b,'a-row');const n=put(row,'a-name');n.textContent=a.name;const d=put(row,'a-detail');d.textContent=a.detail;
+  if(e.text){const m=put(b,'a-msg');m.textContent=e.text}
+  alertBox.appendChild(box);
+  await wait(40);box.classList.add('in');a.sound();
+  await a.hold();
+  box.classList.remove('in');await wait(600);box.remove();
+}
+
+/* ---------- Übergang ---------- */
+function stinger(root){
+  const m=put(root,'ir-map');
+  const t=contours(m);t.style.position='absolute';
+  put(root,'ir-pin',`<svg viewBox="-45 -120 90 120" width="90" height="120"><defs><linearGradient id="pg" x1="0" x2="1"><stop offset="0" stop-color="#B303F8"/><stop offset="1" stop-color="#1141E4"/></linearGradient></defs>
+    <path d="M0,0 C-40,-55 -44,-72 -44,-82 a44,44 0 1,1 88,0 C44,-72 40,-55 0,0Z" fill="url(#pg)"/><circle cy="-82" r="16" fill="#fff"/></svg>`);
+  const mk=makeMark({cls:'ir-mark',d:500,t:420});root.appendChild(mk);
+  put(root,'ir-word','// enter the void');
+}
+
+boot({start,solo,duo,pip,quad,chat,pause,signal,end,stinger},{alert,samples:{chat:['Wo seid ihr gerade?','Schöne Aussicht!','Das Wetter spielt mit','Grüße aus Köln','Zeig mal den Hafen','Wie ist das Netz da?'],chatEvery:3200}});
+</script>
+</body>
+</html>
