@@ -50,6 +50,7 @@ stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
 gen = [0]
 current_ws = [None]
+twitch_state = {"login": None}           # verbundener Kanal, für die Anzeige im Skript-Fenster
 server = [None]
 started = [None]
 badges = {}
@@ -692,6 +693,7 @@ def eventsub_loop(my_gen):
             welcome = ws.recv_json()["payload"]["session"]
             ws.timeout((welcome.get("keepalive_timeout_seconds") or 30) + 10)
             subscribe_all(s, welcome["id"])
+            twitch_state["login"] = s["login"]
             if not badges:
                 threading.Thread(target=load_badges, args=(s,), daemon=True).start()
             backoff = 2
@@ -1047,6 +1049,9 @@ def fill_packs(props):
     info = obs.obs_properties_get(props, "studio_info")
     if info:
         obs.obs_property_set_description(info, studio_head())
+    status = obs.obs_properties_get(props, "twitch_status")
+    if status:
+        obs.obs_property_set_description(status, twitch_status())
     up = obs.obs_properties_get(props, "m_studio")
     if up:
         s = (mgr["index"] or {}).get("studio") or {}
@@ -1056,11 +1061,27 @@ def fill_packs(props):
             obs.obs_property_set_description(up, f"VOID Studio auf {s['version']} aktualisieren")
 
 
-def group(p, name, label, build):
-    """Aufklappbare Gruppe; die Einstellungen darin bleiben unter ihrem Namen gespeichert."""
+def twitch_status():
+    if twitch_state["login"] and current_ws[0] is not None:
+        return f"Verbunden als {twitch_state['login']}. Alerts, Chat und Ziele kommen live in die Szenen."
+    if load_token():
+        return "Anmeldung gespeichert, die Verbindung zu Twitch wird aufgebaut."
+    return "Nicht verbunden. Ohne Verbindung bleiben Alerts, Chat und Ziele in den Szenen leer."
+
+
+def group(p, name, label, intro, build):
+    """Eine Kategorie als Rahmen mit Überschrift und kurzer Erklärung; die Einstellungen darin behalten ihre Namen."""
     g = obs.obs_properties_create()
+    if intro:
+        obs.obs_properties_add_text(g, name + "_info", intro, getattr(obs, "OBS_TEXT_INFO", obs.OBS_TEXT_DEFAULT))
     build(g)
     obs.obs_properties_add_group(p, name, label, obs.OBS_GROUP_NORMAL, g)
+
+
+def tip(prop, text):
+    """Tooltip am Feld."""
+    obs.obs_property_set_long_description(prop, text)
+    return prop
 
 
 def script_properties():
@@ -1071,57 +1092,78 @@ def script_properties():
     obs.obs_properties_add_text(p, "studio_info", studio_head(), INFO)
 
     def packs(g):
-        obs.obs_properties_add_list(g, "pack", "Szenen-Pack", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING)
+        tip(obs.obs_properties_add_list(g, "pack", "Pack", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING),
+            "Pack auswählen, dann installieren, aktualisieren, Ordner öffnen oder entfernen.")
+        obs.obs_properties_add_button(g, "m_install", "Installieren / aktualisieren", ui_install)
+        tip(obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (import.json)", ui_open),
+            "Darin liegt import.json für OBS: Szenensammlung → Importieren.")
+        obs.obs_properties_add_button(g, "m_remove", "Entfernen", ui_remove)
         obs.obs_properties_add_button(g, "m_check", "Nach Updates suchen", ui_check)
-        obs.obs_properties_add_button(g, "m_install", "Pack installieren / aktualisieren", ui_install)
         obs.obs_properties_add_button(g, "m_all", "Alle Pack-Updates installieren", ui_install_all)
-        obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (für den Import)", ui_open)
-        obs.obs_properties_add_button(g, "m_remove", "Pack entfernen", ui_remove)
         obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
-        obs.obs_properties_add_text(g, "repo", "Pack-Quelle (GitHub owner/repo oder URL)", obs.OBS_TEXT_DEFAULT)
 
     def twitch(g):
-        obs.obs_properties_add_button(g, "login", "Mit Twitch verbinden", on_login)
+        obs.obs_properties_add_text(g, "twitch_status", twitch_status(), INFO)
+        tip(obs.obs_properties_add_button(g, "login", "Mit Twitch verbinden", on_login),
+            "Öffnet die Bestätigung bei Twitch im Browser. Gilt für alle Packs.")
         obs.obs_properties_add_button(g, "logout", "Abmelden", on_logout)
-        obs.obs_properties_add_button(g, "portal", "Stream-Statistiken im Portal öffnen", ui_portal)
-        obs.obs_properties_add_int(g, "port", "Lokaler Port der Bridge", 1024, 65535, 1)
+        tip(obs.obs_properties_add_button(g, "portal", "Stream-Statistiken im Portal öffnen", ui_portal),
+            "my.void.cx/studio: Zuschauer, Chat, Follower und Abos deiner Streams.")
 
     def alerts(g):
         obs.obs_properties_add_int_slider(g, "volume", "Lautstärke", 0, 100, 1)
         obs.obs_properties_add_button(g, "c_replay", "Letzten Alert wiederholen", ctl_replay)
         obs.obs_properties_add_button(g, "c_pause", "Alerts pausieren / fortsetzen", ctl_pause)
         obs.obs_properties_add_button(g, "c_skip", "Aktuellen Alert überspringen", ctl_skip)
+
+    def tests(g):
         for key, label in [("follow", "Follow"), ("sub", "Abo"), ("resub", "Abo verlängert"), ("gift", "Geschenk-Abos"),
                            ("cheer", "Bits"), ("raid", "Raid"), ("redeem", "Kanalpunkte")]:
-            obs.obs_properties_add_button(g, "t_" + key, "Test: " + label,
+            obs.obs_properties_add_button(g, "t_" + key, label,
                                           lambda props, prop, k=key: (alert(dict(SAMPLES[k]), count=False), False)[1])
+        obs.obs_properties_add_button(g, "t_chat", "Chatnachricht", test_chat)
+
+    def goals(g):
+        obs.obs_properties_add_int(g, "goal_follow", "Follower-Ziel", 0, 10000000, 1)
+        obs.obs_properties_add_int(g, "goal_sub", "Abo-Ziel", 0, 1000000, 1)
+        obs.obs_properties_add_int(g, "goal_bits", "Bits-Ziel", 0, 100000000, 100)
+        obs.obs_properties_add_button(g, "c_bits", "Bits-Ziel zurücksetzen", ctl_reset_bits)
 
     def scenes(g):
-        obs.obs_properties_add_bool(g, "show_latest", "Letzte Unterstützer anzeigen")
-        for k, label in [("follow", "Letzter Follow"), ("sub", "Letztes Abo"), ("gift", "Letztes Geschenk"),
-                         ("cheer", "Letzte Bits"), ("raid", "Letzter Raid")]:
+        tip(obs.obs_properties_add_bool(g, "show_latest", "Letzte Unterstützer an der Game-Kamera zeigen"),
+            "Erscheint in den Spielszenen über den Zielen.")
+        for k, label in [("follow", "Follow"), ("sub", "Abo"), ("gift", "Geschenk"), ("cheer", "Bits"), ("raid", "Raid")]:
             obs.obs_properties_add_bool(g, "latest_" + k, "   " + label)
-        obs.obs_properties_add_int(g, "goal_follow", "Follower-Ziel (0 = aus)", 0, 10000000, 1)
-        obs.obs_properties_add_int(g, "goal_sub", "Abo-Ziel (0 = aus)", 0, 1000000, 1)
-        obs.obs_properties_add_int(g, "goal_bits", "Bits-Ziel (0 = aus)", 0, 100000000, 100)
-        obs.obs_properties_add_button(g, "c_bits", "Bits-Ziel zurücksetzen", ctl_reset_bits)
-        obs.obs_properties_add_button(g, "c_session", "Session-Rückblick zurücksetzen", ctl_reset_session)
+        tip(obs.obs_properties_add_button(g, "c_session", "Session-Rückblick zurücksetzen", ctl_reset_session),
+            "Der Rückblick in „Stream endet“ zählt ab hier neu.")
 
     def chat(g):
-        obs.obs_properties_add_text(g, "ignore", "Ausgeblendete Namen", obs.OBS_TEXT_DEFAULT)
+        tip(obs.obs_properties_add_text(g, "ignore", "Ausgeblendete Namen", obs.OBS_TEXT_DEFAULT),
+            "Kommagetrennt, z. B. Bots wie streamelements, nightbot.")
         obs.obs_properties_add_bool(g, "hide_cmd", "Befehle mit ! ausblenden")
-        obs.obs_properties_add_button(g, "t_chat", "Test: Chatnachricht", test_chat)
 
     def telemetry(g):
         obs.obs_properties_add_bool(g, "tele_on", "Spiel-Telemetrie weiterreichen")
-        obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT)
+        tip(obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT),
+            "Funbit-Format, z. B. http://127.0.0.1:25555/api/ets2/telemetry")
 
-    group(p, "g_packs", "Szenen-Packs", packs)
-    group(p, "g_twitch", "Twitch-Bridge", twitch)
-    group(p, "g_alerts", "Alerts", alerts)
-    group(p, "g_scenes", "Spielszenen und Ziele", scenes)
-    group(p, "g_chat", "Chat", chat)
-    group(p, "g_tele", "Telemetrie (ETS2/ATS)", telemetry)
+    def tech(g):
+        tip(obs.obs_properties_add_int(g, "port", "Lokaler Port", 1024, 65535, 1),
+            "Über diesen Port holen sich die Szenen die Live-Daten. Nur ändern, wenn 8787 belegt ist.")
+        tip(obs.obs_properties_add_text(g, "repo", "Pack-Quelle", obs.OBS_TEXT_DEFAULT),
+            "GitHub owner/repo oder eine eigene URL. Standard: " + DEFAULT_REPO)
+
+    group(p, "g_packs", "Szenen-Packs",
+          "Packs installieren und aktuell halten. Nach dem ersten Installieren die Szenensammlung einmal in OBS importieren.", packs)
+    group(p, "g_twitch", "Twitch", None, twitch)
+    group(p, "g_alerts", "Alerts",
+          "Einblendung mit Sound bei Follow, Abo, Bits, Raid und Kanalpunkten. Eigene Sounds: " + SOUND_DIR, alerts)
+    group(p, "g_tests", "Testen", "Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.", tests)
+    group(p, "g_goals", "Ziele", "Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.", goals)
+    group(p, "g_scenes", "Spielszenen und Rückblick", None, scenes)
+    group(p, "g_chat", "Chat", None, chat)
+    group(p, "g_tele", "Telemetrie (ETS2/ATS)", "Für die Szene „ETS2 Telemetrie“; braucht einen laufenden Telemetrie-Server.", telemetry)
+    group(p, "g_tech", "Technik", None, tech)
     fill_packs(p)
     return p
 
@@ -1133,6 +1175,7 @@ def on_login(props, prop):
 
 def on_logout(props, prop):
     stop_eventsub()
+    twitch_state["login"] = None
     try:
         os.remove(TOKEN_FILE)
     except OSError:
