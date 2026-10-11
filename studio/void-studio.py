@@ -23,7 +23,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, threading,
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.2"
+STUDIO_VERSION = "1.0.3"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -823,9 +823,23 @@ def status_of(p):
     return f"installiert {inst.get('version')}"
 
 
+TEMPLATE_DIR = "_vorlage"                 # im Pack: die Vorlage liegt hier, oben nur import.json für OBS
+
+
+def template_of(pdir):
+    """Vorlage der Szenensammlung; ältere Packs (bis 1.0.0) haben sie noch direkt im Pack-Ordner."""
+    for tpl in (os.path.join(pdir, TEMPLATE_DIR, "import.template.json"), os.path.join(pdir, "import.template.json")):
+        if os.path.isfile(tpl):
+            return tpl
+    return None
+
+
 def make_import(pdir):
-    """import.json des Packs auf diesen Rechner zuschneiden: ./-Pfade → absolute Pfade, Skript → zentrale Kopie."""
-    tpl = os.path.join(pdir, "import.template.json")
+    """import.json des Packs auf diesen Rechner zuschneiden: ./-Pfade (relativ zum Pack-Ordner) → absolute Pfade,
+    Skript → zentrale Kopie."""
+    tpl = template_of(pdir)
+    if not tpl:
+        raise FileNotFoundError("keine import.template.json im Pack")
     with open(tpl, encoding="utf-8") as f:
         data = json.load(f)
     root = pdir.replace("\\", "/")
@@ -1253,7 +1267,7 @@ def script_load(settings):
         log(f"Zentrale Kopie nicht möglich: {e}")
     for pid in os.listdir(PACKS_DIR):                       # von Hand entpackte (z. B. private) Packs vorbereiten
         d = os.path.join(PACKS_DIR, pid)
-        if os.path.isfile(os.path.join(d, "import.template.json")) and not os.path.isfile(os.path.join(d, "import.json")):
+        if template_of(d) and not os.path.isfile(os.path.join(d, "import.json")):
             try:
                 make_import(d)
                 log(f"{pid}: import.json erzeugt – jetzt in OBS importieren: {d}{os.sep}import.json")
