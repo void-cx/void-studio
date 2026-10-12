@@ -441,7 +441,7 @@ def web_key(renew=False):
 
 
 def lan_addresses():
-    """IPv4-Adressen dieses Rechners im Heimnetz bzw. VPN (z. B. Tailscale)."""
+    """IPv4-Adressen dieses Rechners im Heimnetz."""
     ips = set()
     try:
         for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
@@ -599,6 +599,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.sse()
         if path == "/studio":
             return self.reply(200, WEB_HTML.encode("utf-8"), "text/html; charset=utf-8", cors=False)
+        if path.startswith("/fonts/") or path == "/lockup.svg":   # Schriften und Lockup der Oberfläche aus den Packs
+            name = os.path.basename(urllib.parse.unquote(path))
+            sub, ctype = ("fonts", "font/woff2") if path.startswith("/fonts/") else ("", "image/svg+xml")
+            if path == "/lockup.svg":
+                name = "void-lockup.svg"
+            if name.endswith((".woff2", ".svg")):
+                for pid in sorted(os.listdir(PACKS_DIR)) if os.path.isdir(PACKS_DIR) else []:
+                    fp = os.path.join(PACKS_DIR, pid, "assets", sub, name)
+                    if os.path.isfile(fp):
+                        with open(fp, "rb") as fh:
+                            return self.reply(200, fh.read(), ctype, cors=False)
+            return self.reply(404, b"", "text/plain", cors=False)
         if path.startswith("/api/"):
             if not self.authorized():
                 return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
@@ -1732,7 +1744,7 @@ def script_properties():
             "Zum Kopieren. Als Dock: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse.")
         obs.obs_properties_add_button(g, "w_open", "Im Browser öffnen", ui_web)
         tip(obs.obs_properties_add_bool(g, "remote_on", "Auch im Heimnetz erreichbar (Handy, Tablet)"),
-            "Andere Geräte im selben Netz oder per VPN (z. B. Tailscale) öffnen die Oberfläche mit Schlüssel. "
+            "Andere Geräte im selben Netz öffnen die Oberfläche mit Schlüssel. "
             "Den Link zeigt die Oberfläche unter Einstellungen.")
         if remote:
             obs.obs_properties_add_text(g, "w_remote", "Im Heimnetz: " + "  ·  ".join(remote), INFO)
@@ -1916,220 +1928,259 @@ WEB_HTML = r"""<!DOCTYPE html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#07071A">
 <title>VOID Studio</title>
 <style>
-:root{--bg:#07071A;--panel:#0F0F26;--panel2:#16163A;--line:rgba(255,255,255,.09);--text:#F2F3FA;--mute:#A3A6C2;
-  --violet:#B303F8;--blue:#1141E4;--lilac:#D27BFF;--sky:#7C9BFF;--green:#3BE39A;--red:#FF5468;--yellow:#FFD45C}
-*{box-sizing:border-box}
-html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-body{min-height:100vh;background:radial-gradient(800px 500px at 0% 0%,rgba(179,3,248,.16),transparent 70%),radial-gradient(800px 600px at 100% 100%,rgba(17,65,228,.18),transparent 70%),var(--bg);background-attachment:fixed}
-a{color:var(--sky)}
-header{position:sticky;top:0;z-index:5;background:rgba(7,7,26,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
-.top{display:flex;align-items:center;gap:12px;padding:12px 16px 8px;flex-wrap:wrap}
-.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:.01em}
-.logo i{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--violet),var(--blue));display:inline-block}
-.chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
-.chip{font-size:12px;padding:3px 10px;border-radius:12px;background:var(--panel2);color:var(--mute);white-space:nowrap}
-.chip.ok{color:#0b2a1d;background:var(--green)}.chip.warn{color:#2a1f00;background:var(--yellow)}.chip.bad{color:#fff;background:var(--red)}
-nav{display:flex;gap:2px;padding:0 10px;overflow-x:auto}
-nav button{flex:1;min-width:max-content;padding:10px 14px;background:none;border:0;border-bottom:2px solid transparent;color:var(--mute);font:inherit;font-weight:600;cursor:pointer}
-nav button.on{color:var(--text);border-color:var(--lilac)}
-main{padding:16px;max-width:1100px;margin:0 auto}
-.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
-.card h2{margin:0 0 4px;font-size:15px}
-.card p.sub{margin:0 0 12px;color:var(--mute);font-size:13px}
-.field{margin:0 0 14px}
-.field label{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px;margin-bottom:5px}
-.field small{display:block;color:var(--mute);font-size:12px;margin-top:4px}
-.saved{color:var(--green);font-weight:500;opacity:0;transition:opacity .3s}.saved.on{opacity:1}
-select{padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
-input[type=text],input[type=number],textarea{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
-textarea{min-height:84px;resize:vertical}
-input:focus,textarea:focus{outline:2px solid rgba(210,123,255,.55);outline-offset:0;border-color:transparent}
-input[type=range]{width:100%;accent-color:var(--lilac)}
-.check{display:flex;align-items:center;gap:9px;margin:6px 0;font-size:14px;cursor:pointer}
-.field label.check{justify-content:flex-start;font-weight:400;font-size:14px}
-#infos-card{grid-column:1/-1}
-#infos-form{display:grid;gap:0 18px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
-.check input{width:18px;height:18px;accent-color:var(--violet)}
+/* Gestaltung wie das Portal (Corporate Design Manual v1.1): sachlich, freundlich, präzise.
+   Schriften und Lockup liefert VOID Studio aus den installierten Packs (/fonts/…, /lockup.svg). */
+@font-face{font-family:"Space Grotesk";font-weight:400;font-display:swap;src:url(/fonts/space-grotesk-400.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:500;font-display:swap;src:url(/fonts/space-grotesk-500.woff2) format("woff2")}
+@font-face{font-family:"Space Grotesk";font-weight:700;font-display:swap;src:url(/fonts/space-grotesk-700.woff2) format("woff2")}
+@font-face{font-family:"JetBrains Mono";font-weight:500;font-display:swap;src:url(/fonts/jetbrains-mono-500.woff2) format("woff2")}
+:root{--violet:#B303F8;--violet-hover:#9302CC;--blue:#1141E4;--black:#07071A;--surface:#0F1024;--raised:#171936;--line:#262947;
+  --ink:#F2F3FA;--muted:#A3A6C2;--violet-text:#D27BFF;--blue-text:#7C9BFF;--violet-tint:#1F1442;--warn:#F5C451;--warn-tint:#2A2414;
+  --danger:#FF7A8A;--danger-tint:#2C1420;--ok:#6FE3B4;--gradient:linear-gradient(135deg,var(--violet),var(--blue));
+  --r-sm:6px;--r-md:10px;--r-lg:16px;--sans:"Space Grotesk",system-ui,sans-serif;--mono:"JetBrains Mono",ui-monospace,monospace;color-scheme:dark}
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;background:var(--black);color:var(--ink);font:400 16px/26px var(--sans);min-height:100vh}
+a{color:var(--violet-text);text-decoration:none}a:hover{text-decoration:underline;text-underline-offset:3px}
+:focus-visible{outline:2px solid var(--blue-text);outline-offset:2px;border-radius:var(--r-sm)}
+h1,h2{margin:0;font-weight:700;letter-spacing:-.01em}
+h1{font-size:28px;line-height:36px}h2{font-size:18px;line-height:26px}
+p{margin:0}
+.muted{color:var(--muted)}.small,small{font-size:14px;line-height:22px}
+.label{font:500 12px/16px var(--mono);letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+
+/* Hülle: Seitenleiste wie im Portal, schmal (Dock, Handy) eine Leiste oben */
+.shell{display:grid;grid-template-columns:232px minmax(0,1fr);min-height:100vh}
+.side{position:sticky;top:0;height:100vh;border-right:1px solid var(--line);background:var(--surface);padding:20px 14px;display:flex;flex-direction:column;gap:20px}
+.side-head{display:flex;align-items:center;gap:10px;padding:0 6px}
+.side-head img{height:28px}
+.side-head .logo-text{font-weight:700;font-size:17px}
+.tag{font:500 12px var(--mono);color:var(--violet-text);border:1px solid var(--line);border-radius:var(--r-sm);padding:2px 6px}
+nav.tabs{display:flex;flex-direction:column;gap:2px}
+nav.tabs button{display:flex;align-items:center;gap:8px;color:var(--muted);padding:8px 10px;border-radius:var(--r-sm);font:400 15px/22px var(--sans);
+  background:none;border:0;text-align:left;width:100%;cursor:pointer}
+nav.tabs button:hover{color:var(--ink);background:var(--raised)}
+nav.tabs button.on{color:var(--ink);background:var(--violet-tint);box-shadow:inset 2px 0 0 var(--violet)}
+.side-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+main{padding:32px 40px 80px;min-width:0;max-width:1180px}
+.page-head{margin-bottom:24px}.page-head p{margin-top:6px;color:var(--muted);max-width:72ch}
+@media (max-width:760px){
+  .shell{grid-template-columns:minmax(0,1fr)}
+  .side{position:sticky;z-index:5;height:auto;padding:10px 12px;border-right:0;border-bottom:1px solid var(--line);gap:10px}
+  .side-head img{height:24px}
+  nav.tabs{flex-direction:row;overflow-x:auto;gap:4px}
+  nav.tabs button{width:auto;white-space:nowrap;padding:6px 10px;font-size:14px}
+  nav.tabs button.on{box-shadow:inset 0 -2px 0 var(--violet)}
+  .side-foot{display:none}
+  main{padding:20px 12px 64px}
+  h1{font-size:22px;line-height:30px}
+}
+
+/* Bausteine aus dem Portal */
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr))}
+.span-all{grid-column:1/-1}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);padding:24px;min-width:0}
+.card-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;flex-wrap:wrap;margin-bottom:4px}
+.card .lead{color:var(--muted);font-size:14px;line-height:22px;margin:0 0 16px}
+@media (max-width:760px){.card{padding:18px}}
+.stack{display:flex;flex-direction:column;gap:16px}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.btn{padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font:inherit;font-weight:600;cursor:pointer}
-.btn:hover{border-color:rgba(210,123,255,.5)}
-.btn.primary{background:linear-gradient(135deg,var(--violet),var(--blue));border:0}
-.btn.danger{color:var(--red)}
-.btn.small{padding:6px 10px;font-size:13px}
-.btn:disabled{opacity:.5;cursor:default}
-.note{padding:10px 12px;border-radius:10px;background:var(--panel2);color:var(--mute);font-size:13px;margin:0 0 12px}
-.note.warn{background:rgba(255,212,92,.12);color:var(--yellow)}
-.note.ok{background:rgba(59,227,154,.10);color:var(--green)}
-.goal{margin:8px 0 12px}.goal .t{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
-.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden}
-.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--violet),var(--sky));border-radius:4px;transition:width .6s}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}.kv b{color:var(--mute);font-weight:500}
-.pack{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)}
-.pack:first-of-type{border-top:0}
-.pack img{width:132px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:var(--panel2);flex-shrink:0}
-.pack .n{font-weight:700}.pack .s{color:var(--mute);font-size:13px;margin:2px 0 8px}
-.code{font:600 26px/1 ui-monospace,Consolas,monospace;letter-spacing:.12em;color:var(--lilac);margin:6px 0}
-.url{font:12px/1.4 ui-monospace,Consolas,monospace;word-break:break-all;background:#0A0A1F;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}
-.log{font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--mute);max-height:260px;overflow:auto}
-.log div{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04)}
-.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 16px;border-radius:12px;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:44px;padding:10px 20px;border-radius:var(--r-md);
+  font:600 16px/20px var(--sans);border:1px solid var(--line);background:transparent;color:var(--ink);cursor:pointer;transition:background .15s,border-color .15s}
+.btn:hover{border-color:var(--muted)}
+.btn-primary{background:var(--violet);border-color:var(--violet);color:#fff}.btn-primary:hover{background:var(--violet-hover);border-color:var(--violet-hover)}
+.btn-danger{color:var(--danger);border-color:var(--danger-tint)}.btn-danger:hover{border-color:var(--danger)}
+.btn-sm{min-height:36px;padding:6px 12px;font-size:14px;border-radius:var(--r-sm)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:2px 10px;border-radius:var(--r-sm);font-size:14px;line-height:24px;font-weight:500;background:var(--raised);color:var(--muted);white-space:nowrap}
+.chip-sm{padding:0 7px;font-size:12px;line-height:20px}
+.chip-ok{background:#10261f;color:var(--ok)}.chip-warn{background:var(--warn-tint);color:var(--warn)}.chip-danger{background:var(--danger-tint);color:var(--danger)}
+.chip-live::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--blue-text)}
+.field{display:flex;flex-direction:column;gap:6px}
+.field>label{display:flex;justify-content:space-between;gap:8px;font-weight:500;font-size:15px}
+.field .hint{color:var(--muted);font-size:14px;line-height:20px}
+.saved{color:var(--ok);font-size:13px;opacity:0;transition:opacity .3s}.saved.on{opacity:1}
+input[type=text],input[type=number],select,textarea{width:100%;min-width:0;background:var(--raised);color:var(--ink);border:1px solid var(--line);
+  border-radius:var(--r-md);padding:10px 14px;min-height:44px;font:400 16px/22px var(--sans)}
+select{width:auto}
+textarea{min-height:96px;resize:vertical}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--violet)}
+input[type=range]{width:100%;accent-color:var(--violet)}
+.check{display:inline-flex;gap:10px;align-items:center;cursor:pointer;font-size:15px}
+.check input{width:18px;height:18px;accent-color:var(--violet);flex:none}
+.form-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(min(100%,280px),1fr))}
+.alert{border-radius:var(--r-md);padding:12px 16px;border:1px solid var(--line);background:var(--raised);font-size:14px;line-height:22px;color:var(--muted)}
+.alert-warn{border-color:#4A3D14;color:var(--warn);background:var(--warn-tint)}
+.progress{height:10px;border-radius:999px;background:var(--raised);overflow:hidden}
+.progress>span{display:block;height:100%;background:var(--gradient);border-radius:inherit;transition:width .6s}
+.goal{display:flex;flex-direction:column;gap:6px}.goal .t{display:flex;justify-content:space-between;font-size:14px}
+dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-size:15px}dl.meta dt{color:var(--muted)}dl.meta dd{margin:0}
+.pack{display:flex;gap:16px;align-items:flex-start;padding:16px 0;border-top:1px solid var(--line)}
+.pack:first-child{border-top:0;padding-top:0}.pack:last-child{padding-bottom:0}
+.pack img{width:144px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--r-md);background:var(--raised);flex:none}
+.pack .n{font-weight:700}.pack .s{color:var(--muted);font-size:14px;margin:0 0 10px}
+@media (max-width:480px){.pack img{width:96px}}
+.code{font:500 26px/1 var(--mono);letter-spacing:.14em;color:var(--violet-text);margin:8px 0}
+.url{font:500 12px/18px var(--mono);word-break:break-all;background:var(--raised);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px}
+.log{font:500 12px/20px var(--mono);color:var(--muted);max-height:280px;overflow:auto}
+.log div{border-bottom:1px solid var(--line);padding:3px 0}
+.big{font-size:22px;font-weight:700;line-height:30px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--raised);border:1px solid var(--line);padding:10px 16px;border-radius:var(--r-md);
+  opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;font-size:14px}
 .toast.on{opacity:1}
 .hidden{display:none!important}
-.big{font-size:22px;font-weight:700}
-@media (max-width:420px){main{padding:10px}.grid{grid-template-columns:1fr}.pack img{width:96px}}
 </style>
 </head>
 <body>
-<header>
-  <div class="top">
-    <div class="logo"><i></i>VOID Studio</div>
-    <div class="chips" id="chips"></div>
-  </div>
-  <nav id="tabs">
+<div class="shell">
+<aside class="side">
+  <div class="side-head"><img src="/lockup.svg" alt="Enter The Void" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'logo-text',textContent:'Enter The Void'}))"><span class="tag">Studio</span></div>
+  <nav class="tabs" id="tabs">
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
-</header>
+  <div class="side-foot" id="chips"></div>
+</aside>
 <main>
   <div id="nokey" class="card hidden">
     <h2>Schlüssel fehlt</h2>
-    <p class="sub">Öffne die Oberfläche über VOID Studio in OBS (Werkzeuge → Skripte → VOID Studio → Web-Oberfläche → „Im Browser öffnen“), oder füge den Link mit Schlüssel ein.</p>
+    <p class="lead" style="margin-top:6px">Öffne die Oberfläche über VOID Studio in OBS (Werkzeuge → Skripte → VOID Studio → Web-Oberfläche → „Im Browser öffnen“) oder mit dem Link samt Schlüssel.</p>
   </div>
 
   <section id="tab-infos">
-    <div class="grid">
-      <div class="card" id="infos-card">
-        <div class="row" style="justify-content:space-between"><h2 id="infos-title">Infos</h2><select id="infos-pack" class="hidden"></select></div>
-        <p class="sub" id="infos-sub"></p>
-        <div id="infos-form"></div>
+    <div class="page-head"><h1 id="infos-title">Infos</h1><p id="infos-sub"></p></div>
+    <div class="card stack">
+      <div class="row" id="infos-pack-row"><span class="label">Pack</span><select id="infos-pack"></select></div>
+      <div id="geo" class="alert hidden">
+        <div class="row" style="justify-content:space-between;margin-bottom:10px"><strong style="color:var(--ink)">Standort vom Gerät</strong>
+          <select id="geo-level"><option value="city">nur Stadt</option><option value="district">Stadt · Stadtteil</option></select></div>
+        <div class="row">
+          <button class="btn btn-sm btn-primary" id="geo-now">Standort übernehmen</button>
+          <label class="check"><input type="checkbox" id="geo-watch">unterwegs laufend aktualisieren</label>
+        </div>
+        <div id="geo-state" class="small" style="margin-top:8px"></div>
       </div>
+      <div id="infos-form" class="form-grid"></div>
     </div>
   </section>
 
   <section id="tab-live" class="hidden">
+    <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
-      <div class="card">
-        <h2>Alerts</h2>
-        <p class="sub" id="alert-state"></p>
-        <div class="field"><label>Lautstärke <span id="vol-v"></span></label><input type="range" min="0" max="100" id="volume"></div>
+      <div class="card stack">
+        <div><h2>Alerts</h2><p class="lead" id="alert-state"></p></div>
+        <div class="field"><label>Lautstärke <span id="vol-v" class="muted"></span></label><input type="range" min="0" max="100" id="volume"></div>
         <div class="row">
-          <button class="btn" data-act="pause" id="pause-btn">Pausieren</button>
-          <button class="btn" data-act="skip">Überspringen</button>
-          <button class="btn" data-act="replay">Letzten wiederholen</button>
+          <button class="btn btn-sm" data-act="pause" id="pause-btn">Pausieren</button>
+          <button class="btn btn-sm" data-act="skip">Überspringen</button>
+          <button class="btn btn-sm" data-act="replay">Letzten wiederholen</button>
         </div>
       </div>
-      <div class="card">
-        <h2>Testen</h2>
-        <p class="sub">Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.</p>
+      <div class="card stack">
+        <div><h2>Testen</h2><p class="lead">Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.</p></div>
         <div class="row">
-          <button class="btn small" data-act="test_follow">Follow</button>
-          <button class="btn small" data-act="test_sub">Abo</button>
-          <button class="btn small" data-act="test_resub">Abo verlängert</button>
-          <button class="btn small" data-act="test_gift">Geschenk-Abos</button>
-          <button class="btn small" data-act="test_cheer">Bits</button>
-          <button class="btn small" data-act="test_raid">Raid</button>
-          <button class="btn small" data-act="test_redeem">Kanalpunkte</button>
-          <button class="btn small" data-act="test_chat">Chatnachricht</button>
+          <button class="btn btn-sm" data-act="test_follow">Follow</button>
+          <button class="btn btn-sm" data-act="test_sub">Abo</button>
+          <button class="btn btn-sm" data-act="test_resub">Abo verlängert</button>
+          <button class="btn btn-sm" data-act="test_gift">Geschenk-Abos</button>
+          <button class="btn btn-sm" data-act="test_cheer">Bits</button>
+          <button class="btn btn-sm" data-act="test_raid">Raid</button>
+          <button class="btn btn-sm" data-act="test_redeem">Kanalpunkte</button>
+          <button class="btn btn-sm" data-act="test_chat">Chatnachricht</button>
         </div>
       </div>
-      <div class="card">
-        <h2>Ziele</h2>
-        <p class="sub">Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.</p>
-        <div id="goals"></div>
+      <div class="card stack">
+        <div><h2>Ziele</h2><p class="lead">Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.</p></div>
+        <div id="goals" class="stack" style="gap:12px"></div>
         <div class="field"><label>Follower-Ziel</label><input type="number" min="0" data-set="goal_follow"></div>
         <div class="field"><label>Abo-Ziel</label><input type="number" min="0" data-set="goal_sub"></div>
         <div class="field"><label>Bits-Ziel</label><input type="number" min="0" step="100" data-set="goal_bits"></div>
-        <button class="btn small" data-act="reset_bits">Bits-Ziel zurücksetzen</button>
+        <div><button class="btn btn-sm" data-act="reset_bits">Bits-Ziel zurücksetzen</button></div>
       </div>
-      <div class="card">
-        <h2>Session</h2>
-        <p class="sub">Daraus entsteht der Rückblick in „Stream endet“.</p>
-        <div class="kv" id="session"></div>
-        <div class="row" style="margin-top:12px"><button class="btn small danger" data-act="reset_session" data-confirm="Session-Rückblick zurücksetzen?">Rückblick zurücksetzen</button></div>
+      <div class="card stack">
+        <div><h2>Session</h2><p class="lead">Daraus entsteht der Rückblick in „Stream endet“.</p></div>
+        <dl class="meta" id="session"></dl>
+        <div><button class="btn btn-sm btn-danger" data-act="reset_session" data-confirm="Session-Rückblick zurücksetzen?">Rückblick zurücksetzen</button></div>
       </div>
-      <div class="card hidden" id="irl-card">
+      <div class="card stack hidden" id="irl-card">
         <h2>IRL</h2>
-        <p class="sub" id="irl-state"></p>
+        <p id="irl-state"></p>
       </div>
     </div>
   </section>
 
   <section id="tab-packs" class="hidden">
-    <div class="grid">
-      <div class="card" style="grid-column:1/-1">
-        <div id="studio-update" class="note warn hidden"></div>
-        <div id="pack-busy" class="note hidden"></div>
-        <div class="row">
-          <button class="btn" data-act="check">Nach Updates suchen</button>
-          <button class="btn" data-act="install_all">Alle Pack-Updates installieren</button>
-        </div>
+    <div class="page-head"><h1>Packs</h1><p>Szenen-Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten.</p></div>
+    <div class="stack">
+      <div id="studio-update" class="alert alert-warn hidden"></div>
+      <div id="pack-busy" class="alert hidden"></div>
+      <div class="row">
+        <button class="btn btn-sm" data-act="check">Nach Updates suchen</button>
+        <button class="btn btn-sm" data-act="install_all">Alle Pack-Updates installieren</button>
       </div>
-      <div class="card" style="grid-column:1/-1"><div id="packs"></div></div>
+      <div class="card"><div id="packs"></div></div>
     </div>
   </section>
 
   <section id="tab-settings" class="hidden">
+    <div class="page-head"><h1>Einstellungen</h1><p>Gelten für alle Packs und Szenensammlungen.</p></div>
     <div class="grid">
-      <div class="card">
-        <h2>Twitch</h2>
-        <p class="sub" id="twitch-state"></p>
+      <div class="card stack">
+        <div><h2>Twitch</h2><p class="lead" id="twitch-state"></p></div>
         <div id="device" class="hidden">
-          <div class="note">Bei Twitch bestätigen: <a id="device-link" target="_blank" rel="noopener">twitch.tv/activate</a> öffnen und diesen Code eingeben:</div>
+          <div class="alert">Bei Twitch bestätigen: <a id="device-link" target="_blank" rel="noopener">twitch.tv/activate</a> öffnen und diesen Code eingeben:</div>
           <div class="code" id="device-code"></div>
         </div>
         <div class="row">
-          <button class="btn primary" data-act="twitch_login">Mit Twitch verbinden</button>
-          <button class="btn" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
+          <button class="btn btn-sm btn-primary" data-act="twitch_login">Mit Twitch verbinden</button>
+          <button class="btn btn-sm" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
         </div>
       </div>
-      <div class="card">
+      <div class="card stack">
         <h2>Chat</h2>
-        <div class="field"><label>Ausgeblendete Namen</label><input type="text" data-set="ignore"><small>Kommagetrennt, z. B. Bots wie streamelements, nightbot.</small></div>
+        <div class="field"><label>Ausgeblendete Namen</label><input type="text" data-set="ignore"><span class="hint">Kommagetrennt, z. B. Bots wie streamelements, nightbot.</span></div>
         <label class="check"><input type="checkbox" data-set="hide_cmd">Befehle mit ! ausblenden</label>
       </div>
-      <div class="card">
+      <div class="card stack">
         <h2>Spielszenen und Rückblick</h2>
         <label class="check"><input type="checkbox" data-set="show_latest">Letzte Unterstützer an der Game-Kamera zeigen</label>
-        <div id="latest-items" style="padding-left:26px"></div>
+        <div id="latest-items" class="stack" style="gap:8px;padding-left:28px"></div>
       </div>
-      <div class="card">
-        <h2>IRL</h2>
-        <p class="sub">Überwacht die Kamera-Quelle und schaltet bei einem Abbruch auf „Verbindung weg“ und zurück.</p>
+      <div class="card stack">
+        <div><h2>IRL</h2><p class="lead">Überwacht die Kamera-Quelle und schaltet bei einem Abbruch auf „Verbindung weg“ und zurück.</p></div>
         <label class="check"><input type="checkbox" data-set="irl_auto">Bei Abbruch automatisch umschalten</label>
         <div class="field"><label>Kamera-Quelle</label><input type="text" data-set="irl_source"></div>
-        <div class="row">
-          <div class="field" style="flex:1"><label>Umschalten nach (s)</label><input type="number" min="1" max="60" data-set="irl_delay"></div>
-          <div class="field" style="flex:1"><label>Zurück nach (s)</label><input type="number" min="1" max="60" data-set="irl_back"></div>
+        <div class="form-grid" style="grid-template-columns:1fr 1fr">
+          <div class="field"><label>Umschalten nach (s)</label><input type="number" min="1" max="60" data-set="irl_delay"></div>
+          <div class="field"><label>Zurück nach (s)</label><input type="number" min="1" max="60" data-set="irl_back"></div>
         </div>
       </div>
-      <div class="card">
+      <div class="card stack">
         <h2>Telemetrie (ETS2/ATS)</h2>
         <label class="check"><input type="checkbox" data-set="tele_on">Spiel-Telemetrie weiterreichen</label>
         <div class="field"><label>Telemetrie-URL</label><input type="text" data-set="tele_url"></div>
       </div>
-      <div class="card">
-        <h2>Zugriff</h2>
-        <p class="sub">Als Dock in OBS: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse:</p>
+      <div class="card stack">
+        <div><h2>Zugriff</h2><p class="lead">Als Dock in OBS: Docks → Benutzerdefinierte Browser-Docks, Name „VOID Studio“, diese Adresse:</p></div>
         <div class="url" id="local-url"></div>
-        <button class="btn small" data-copy="local-url">Kopieren</button>
-        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+        <div><button class="btn btn-sm" data-copy="local-url">Kopieren</button></div>
         <label class="check"><input type="checkbox" data-set="remote_on">Auch im Heimnetz erreichbar (Handy, Tablet)</label>
-        <small style="color:var(--mute);font-size:12px">Geräte im selben Netz oder per VPN (z. B. Tailscale) öffnen die Oberfläche mit diesem Link. Wer ihn hat, kann VOID Studio steuern – nicht weitergeben.</small>
-        <div id="remote-urls"></div>
-        <div class="row" style="margin-top:12px"><button class="btn small danger" data-act="renew_key" data-confirm="Neuen Schlüssel erzeugen? Alle bisherigen Links und Docks funktionieren danach nicht mehr.">Neuen Schlüssel erzeugen</button></div>
+        <span class="hint muted small">Andere Geräte im selben Netz öffnen die Oberfläche mit diesem Link. Wer ihn hat, kann VOID Studio steuern – nicht weitergeben.</span>
+        <div id="remote-urls" class="stack" style="gap:8px"></div>
+        <div><button class="btn btn-sm btn-danger" data-act="renew_key" data-confirm="Neuen Schlüssel erzeugen? Alle bisherigen Links und Docks funktionieren danach nicht mehr.">Neuen Schlüssel erzeugen</button></div>
       </div>
-      <div class="card">
+      <div class="card stack span-all">
         <h2>Protokoll</h2>
         <div class="log" id="log"></div>
       </div>
     </div>
   </section>
 </main>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 /* VOID Studio – Web-Oberfläche. Schlüssel aus #k=…, jede Anfrage schickt ihn im Header X-Void-Key. */
@@ -2155,7 +2206,7 @@ function showNoKey(){$('#nokey').classList.remove('hidden');$$('section').forEac
 /* ---------- Tabs ---------- */
 function tab(name){
   $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
-  $$('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='tab-'+name));
+  $$('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='tab-'+name));scrollTo(0,0);
   try{localStorage.setItem('voidTab',name)}catch(_){}
 }
 $$('#tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
@@ -2174,14 +2225,15 @@ $('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;try{localStorage.
 function renderInfos(){
   const packs=S.infos||[],form=$('#infos-form'),sel=$('#infos-pack');
   if(!packs.length){$('#infos-title').textContent='Infos';form.innerHTML='';infoKeys='';
-    $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';sel.classList.add('hidden');return}
+    $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';$('#infos-pack-row').classList.add('hidden');$('#geo').classList.add('hidden');return}
   /* Vorauswahl: zuletzt gewählt, sonst das Pack der aktiven Szenensammlung, sonst das erste */
   if(!packs.some(p=>p.id===infoPack))infoPack=(S.pack&&packs.some(p=>p.id===S.pack.id))?S.pack.id:packs[0].id;
   const opts=packs.map(p=>`${p.id}:${p.name}`).join('|');
   if(sel.dataset.o!==opts){sel.dataset.o=opts;sel.innerHTML=packs.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
-  sel.value=infoPack;sel.classList.toggle('hidden',packs.length<2);
-  const pack=packs.find(p=>p.id===infoPack),list=pack.fields;
-  $('#infos-title').textContent=packs.length<2?`Infos · ${pack.name}`:'Infos';
+  sel.value=infoPack;$('#infos-pack-row').classList.toggle('hidden',packs.length<2);
+  const pack=packs.find(p=>p.id===infoPack),list=[...pack.fields.filter(f=>!f.multiline),...pack.fields.filter(f=>f.multiline)];
+  renderGeo(pack);
+  $('#infos-title').textContent=`Infos · ${pack.name}`;
   $('#infos-sub').textContent='Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+
     (S.pack&&S.pack.id!==pack.id?` Gerade aktiv in OBS: ${S.pack.name}.`:'');
   const keys=pack.id+'|'+list.map(i=>i.label).join('|');
@@ -2189,6 +2241,7 @@ function renderInfos(){
     infoKeys=keys;form.innerHTML='';
     list.forEach(i=>{
       const f=el('div','field');const lab=el('label','',`<span>${esc(i.label)}</span><span class="saved">gespeichert</span>`);
+      if(i.multiline)f.style.gridColumn='1/-1';
       let inp;
       if(i.label==='Wunschliste'){
         inp=el('input');inp.type='checkbox';const c=el('label','check');c.append(inp,document.createTextNode('„Auf die Wunschliste!“-Sticker zeigen'));
@@ -2199,7 +2252,7 @@ function renderInfos(){
         f.append(lab,inp);
       }
       inp.dataset.info=i.label;
-      if(i.help&&i.label!=='Wunschliste')f.append(el('small','',esc(i.help)));
+      if(i.help&&i.label!=='Wunschliste')f.append(el('span','hint',esc(i.help)));
       form.append(f);
     });
   }
@@ -2210,6 +2263,51 @@ async function saveInfo(pack,label,value,lab){
   try{const r=await api('/api/infos',{pack,values:{[label]:value}});S=r.state;
     const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
   catch(e){toast('Nicht gespeichert: '+e.message)}
+}
+
+/* ---------- Standort vom Gerät (IRL): Ort und Wetter aus der Browser-Ortung ----------
+   Nur in sicherem Kontext (HTTPS oder 127.0.0.1). Ins Bild kommt höchstens Stadt · Stadtteil, nie die Straße;
+   fürs Wetter reichen auf ~1 km gerundete Koordinaten. Ortsname per OpenStreetMap (Nominatim), höchstens 1× pro Minute. */
+const GEO={watch:null,last:null,lastName:0,lock:null};
+try{$('#geo-level').value=localStorage.getItem('voidGeoLevel')||'city'}catch(_){}
+$('#geo-level').onchange=()=>{try{localStorage.setItem('voidGeoLevel',$('#geo-level').value)}catch(_){}};
+function geoNote(t){$('#geo-state').textContent=t}
+function km(a,b){const r=Math.PI/180,x=(b.lon-a.lon)*r*Math.cos((a.lat+b.lat)/2*r),y=(b.lat-a.lat)*r;return Math.sqrt(x*x+y*y)*6371}
+async function geoApply(pos,force){
+  const p={lat:pos.coords.latitude,lon:pos.coords.longitude};
+  if(!force&&GEO.last&&km(GEO.last,p)<1&&Date.now()-GEO.lastName<600000)return;   /* erst nach 1 km oder 10 min */
+  if(!force&&Date.now()-GEO.lastName<60000)return;
+  GEO.last=p;GEO.lastName=Date.now();
+  let place='';
+  try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=de&lat=${p.lat}&lon=${p.lon}`);
+    const a=(await r.json()).address||{};
+    const city=a.city||a.town||a.village||a.municipality||a.county||'';
+    const part=a.suburb||a.city_district||a.quarter||a.neighbourhood||'';
+    place=$('#geo-level').value==='district'&&part&&part!==city?`${city} · ${part}`:city;
+  }catch(_){}
+  const values={'Wetter-Ort':`${p.lat.toFixed(2)},${p.lon.toFixed(2)}`};
+  if(place)values['Ort']=place;
+  try{const r=await api('/api/infos',{pack:infoPack,values});S=r.state;render();
+    geoNote(`Übernommen ${new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'})}: ${place||'(Ortsname nicht gefunden, nur Wetter)'}`)}
+  catch(e){geoNote('Nicht gespeichert: '+e.message)}
+}
+function geoErr(e){geoNote(e.code===1?'Standort nicht erlaubt – in den Browser-Einstellungen für diese Seite freigeben.':'Standort nicht verfügbar: '+e.message)}
+$('#geo-now').onclick=()=>{geoNote('Standort wird ermittelt …');navigator.geolocation.getCurrentPosition(p=>geoApply(p,true),geoErr,{enableHighAccuracy:false,timeout:20000,maximumAge:60000})};
+$('#geo-watch').onchange=async()=>{
+  if($('#geo-watch').checked){
+    GEO.watch=navigator.geolocation.watchPosition(p=>geoApply(p,false),geoErr,{enableHighAccuracy:false,maximumAge:60000});
+    try{GEO.lock=await navigator.wakeLock.request('screen')}catch(_){}   /* Bildschirm an lassen, sonst stoppt die Ortung */
+    geoNote('Läuft, solange diese Seite offen ist. Aktualisiert nach 1 km oder 10 Minuten.');
+  }else{if(GEO.watch!=null)navigator.geolocation.clearWatch(GEO.watch);GEO.watch=null;if(GEO.lock){GEO.lock.release();GEO.lock=null}geoNote('')}
+};
+function renderGeo(pack){
+  const show=pack&&pack.fields.some(f=>f.label==='Ort');
+  $('#geo').classList.toggle('hidden',!show);
+  if(!show)return;
+  const ok=window.isSecureContext&&'geolocation' in navigator;
+  $('#geo-now').disabled=$('#geo-watch').disabled=!ok;
+  if(!ok)geoNote('Über diese Verbindung gibt der Browser keinen Standort frei (nur bei HTTPS oder direkt am PC). Ort dann einfach von Hand eintragen.');
+  else if(!$('#geo-state').textContent)geoNote('Ort kommt ins Bild (nur Stadt bzw. Stadtteil), Koordinaten nur gerundet fürs Wetter.');
 }
 
 /* ---------- Einstellungen (data-set) ---------- */
@@ -2248,38 +2346,37 @@ function render(){
   if(!S)return;
   const tw=S.twitch;
   $('#chips').innerHTML=[
-    tw.connected?`<span class="chip ok">Twitch: ${esc(tw.login||'verbunden')}</span>`:`<span class="chip ${tw.saved?'warn':'bad'}">Twitch: ${tw.saved?'verbindet …':'nicht verbunden'}</span>`,
-    S.pack?`<span class="chip">${esc(S.pack.name)}</span>`:'',
-    S.live.paused?'<span class="chip warn">Alerts pausiert</span>':'',
-    S.studio_update?`<span class="chip warn">Update ${esc(S.studio_update)}</span>`:'',
-    `<span class="chip">${esc(S.version)}</span>`].join('');
+    tw.connected?`<span class="chip chip-sm chip-ok">Twitch: ${esc(tw.login||'verbunden')}</span>`:`<span class="chip chip-sm ${tw.saved?'chip-warn':'chip-danger'}">Twitch: ${tw.saved?'verbindet …':'nicht verbunden'}</span>`,
+    S.pack?`<span class="chip chip-sm">${esc(S.pack.name)}</span>`:'',
+    S.live.paused?'<span class="chip chip-sm chip-warn">Alerts pausiert</span>':'',
+    S.studio_update?`<span class="chip chip-sm chip-warn">Update ${esc(S.studio_update)}</span>`:'',
+    `<span class="label">VOID Studio ${esc(S.version)}</span>`].join('');
   renderInfos();
   /* Live */
   $('#alert-state').textContent=S.live.paused?'Pausiert – neue Alerts warten, bis du fortsetzt.':'Alerts laufen.';
   $('#pause-btn').textContent=S.live.paused?'Fortsetzen':'Pausieren';
   setVal($('#volume'),S.live.volume);$('#vol-v').textContent=$('#volume').value+' %';
-  $('#goals').innerHTML=(S.live.goals||[]).map(g=>`<div class="goal"><div class="t"><span>${esc(g.label)}</span><span>${num(g.cur)} / ${num(g.target)}</span></div><div class="bar"><i style="width:${Math.min(100,g.cur/g.target*100)}%"></i></div></div>`).join('')||'<p class="sub">Keine Ziele aktiv.</p>';
+  $('#goals').innerHTML=(S.live.goals||[]).map(g=>`<div class="goal"><div class="t"><span>${esc(g.label)}</span><span class="muted">${num(g.cur)} / ${num(g.target)}</span></div><div class="progress"><span style="width:${Math.min(100,g.cur/g.target*100)}%"></span></div></div>`).join('')||'<p class="muted small">Keine Ziele aktiv.</p>';
   const ss=S.live.session||{},cnt=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
-  $('#session').innerHTML=`<b>Neue Follower</b><span>${num((ss.follows||[]).length)}</span><b>Abos</b><span>${num((ss.subs||[]).length)}</span>
-    <b>Verschenkte Abos</b><span>${num(cnt(ss.gifts))}</span><b>Bits</b><span>${num(cnt(ss.bits))}</span><b>Raids</b><span>${num((ss.raids||[]).length)}</span>
-    <b>Follower gesamt</b><span>${S.live.followers==null?'–':num(S.live.followers)}</span><b>Abonnenten</b><span>${S.live.subs==null?'–':num(S.live.subs)}</span>`;
+  $('#session').innerHTML=[['Neue Follower',(ss.follows||[]).length],['Abos',(ss.subs||[]).length],['Verschenkte Abos',cnt(ss.gifts)],['Bits',cnt(ss.bits)],
+    ['Raids',(ss.raids||[]).length],['Follower gesamt',S.live.followers],['Abonnenten',S.live.subs]].map(([k,v])=>`<dt>${k}</dt><dd>${v==null?'–':num(v)}</dd>`).join('');
   const irlOn=S.irl.auto||(S.pack&&S.pack.id==='irl');
   $('#irl-card').classList.toggle('hidden',!irlOn);
   if(irlOn){const since=S.irl.since?Math.max(0,Math.round(Date.now()/1000-S.irl.since)):0;
     $('#irl-state').innerHTML=S.irl.live==null?`„${esc(S.irl.source)}“ wird überwacht, sobald die Quelle in der Sammlung ist.`
-      :S.irl.live?`<span class="big" style="color:var(--green)">Signal da</span><br>„${esc(S.irl.source)}“ läuft.`
-      :`<span class="big" style="color:var(--red)">Signal weg</span><br>seit ${Math.floor(since/60)}:${String(since%60).padStart(2,'0')} min`;}
+      :S.irl.live?`<span class="big" style="color:var(--ok)">Signal da</span><br><span class="muted">„${esc(S.irl.source)}“ läuft.</span>`
+      :`<span class="big" style="color:var(--danger)">Signal weg</span><br><span class="muted">seit ${Math.floor(since/60)}:${String(since%60).padStart(2,'0')} min</span>`;}
   /* Packs */
   const up=$('#studio-update');up.classList.toggle('hidden',!S.studio_update);
-  if(S.studio_update)up.innerHTML=`VOID Studio ${esc(S.studio_update)} ist verfügbar: ${esc((S.studio_changelog||[]).slice(0,2).join(' · '))}<div class="row" style="margin-top:8px"><button class="btn small primary" data-act="studio_update">Jetzt aktualisieren</button></div>`;
+  if(S.studio_update)up.innerHTML=`VOID Studio ${esc(S.studio_update)} ist verfügbar: ${esc((S.studio_changelog||[]).slice(0,2).join(' · '))}<div class="row" style="margin-top:10px"><button class="btn btn-sm btn-primary" data-act="studio_update">Jetzt aktualisieren</button></div>`;
   const msg=[S.busy,S.error,...(S.notes||[]).slice(-1)].filter(Boolean);
   $('#pack-busy').classList.toggle('hidden',!msg.length);$('#pack-busy').textContent=msg.join(' · ');
-  $('#packs').innerHTML=(S.packs||[]).map(p=>`<div class="pack">${p.preview?`<img src="${esc(p.preview)}" alt="" loading="lazy">`:'<img alt="">'}
-    <div><div class="n">${esc(p.name)}</div><div class="s">${esc(p.status)}</div><div class="row">
-      <button class="btn small ${p.installed?'':'primary'}" data-act="install" data-id="${esc(p.id)}">${p.installed?(p.status.startsWith('Update')?'Aktualisieren':'Neu installieren'):'Installieren'}</button>
-      ${p.installed?`<button class="btn small" data-act="setup" data-id="${esc(p.id)}">In OBS einrichten</button>
-      <button class="btn small danger" data-act="remove" data-id="${esc(p.id)}" data-confirm="${esc(p.name)} entfernen? Die Szenensammlung in OBS bleibt.">Entfernen</button>`:''}
-    </div></div></div>`).join('')||'<p class="sub">Pack-Liste wird geladen …</p>';
+  $('#packs').innerHTML=(S.packs||[]).map(p=>{const upd=p.status.startsWith('Update');return `<div class="pack">${p.preview?`<img src="${esc(p.preview)}" alt="" loading="lazy">`:'<img alt="">'}
+    <div style="min-width:0"><div class="n">${esc(p.name)}</div><p class="s">${p.installed?(upd?`<span class="chip chip-sm chip-warn">${esc(p.status)}</span>`:esc(p.status)):'nicht installiert'}</p><div class="row">
+      <button class="btn btn-sm ${!p.installed||upd?'btn-primary':''}" data-act="install" data-id="${esc(p.id)}">${p.installed?(upd?'Aktualisieren':'Neu installieren'):'Installieren'}</button>
+      ${p.installed?`<button class="btn btn-sm" data-act="setup" data-id="${esc(p.id)}">In OBS einrichten</button>
+      <button class="btn btn-sm btn-danger" data-act="remove" data-id="${esc(p.id)}" data-confirm="${esc(p.name)} entfernen? Die Szenensammlung in OBS bleibt.">Entfernen</button>`:''}
+    </div></div></div>`}).join('')||'<p class="muted">Pack-Liste wird geladen …</p>';
   /* Einstellungen */
   $('#twitch-state').textContent=tw.status;
   $('#device').classList.toggle('hidden',!tw.device);
@@ -2287,14 +2384,14 @@ function render(){
   $$('[data-set]').forEach(i=>setVal(i,S.settings[i.dataset.set]));
   $$('[data-latest]').forEach(i=>setVal(i,(S.settings.latest_items||[]).includes(i.dataset.latest)));
   $('#local-url').textContent=S.local_url;
-  $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><button class="btn small" data-copy="ru${i}">Kopieren</button>`).join('')
-    :'<div class="note warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
+  $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
+    :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
 }
 
 async function poll(){
   if(!KEY){showNoKey();return}
-  try{S=await api('/api/state');render()}catch(e){if(e.message!=='Schlüssel fehlt')$('#chips').innerHTML='<span class="chip bad">VOID Studio nicht erreichbar – läuft OBS?</span>'}
+  try{S=await api('/api/state');render()}catch(e){if(e.message!=='Schlüssel fehlt')$('#chips').innerHTML='<span class="chip chip-sm chip-danger">VOID Studio nicht erreichbar – läuft OBS?</span>'}
 }
 poll();
 setInterval(()=>{if(!document.hidden)poll()},2000);

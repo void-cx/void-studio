@@ -30,7 +30,7 @@ VOID Studio überwacht **Kamera 1**. Bricht das Signal in einer Kamera-Szene ab,
 
 ## Ort, Wetter und Kameranamen
 
-In der VOID-Studio-Oberfläche unter **Infos**: Ort, Wetter-Ort, Kamera 1 bis Kamera 4, Titel und Statuszeilen. Das HUD übernimmt Änderungen sofort – unterwegs auch vom Handy, wenn in VOID Studio „Auch im Heimnetz erreichbar“ an ist und das Handy per VPN (z. B. Tailscale) im Heimnetz hängt. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; Wetter-Ort nimmt einen anderen Ort fürs Wetter.
+In der VOID-Studio-Oberfläche unter **Infos**: Ort, Wetter-Ort, Kamera 1 bis Kamera 4, Titel und Statuszeilen. Das HUD übernimmt Änderungen sofort – auch vom Handy, wenn in VOID Studio „Auch im Heimnetz erreichbar“ an ist und das Handy den PC erreicht. Gibt der Browser den Standort frei (bei HTTPS oder direkt am PC), übernimmt „Standort übernehmen“ Ort und Wetter auf Knopfdruck oder laufend; ins Bild kommt dabei nur die Stadt bzw. der Stadtteil. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; Wetter-Ort nimmt einen anderen Ort fürs Wetter.
 
 ## HUD und feste Parameter
 
