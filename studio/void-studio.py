@@ -27,7 +27,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.1.0"
+STUDIO_VERSION = "1.1.1"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -500,6 +500,7 @@ def web_state():
         "settings": dict({k: cfg[k] for k in BOOL_SETTINGS + tuple(INT_SETTINGS) + STR_SETTINGS},
                          latest_items=cfg["latest_items"], ignore=", ".join(sorted(cfg["ignore"]))),
         "local_url": local, "remote_urls": remote, "port": cfg["port"],
+        "portal": PORTAL_STUDIO,
     }
 
 
@@ -1536,63 +1537,19 @@ def in_thread(fn, *a):
     threading.Thread(target=fn, args=a, daemon=True).start()
 
 
-def selected(props):
-    return obs.obs_data_get_string(settings_ref[0], "pack") if settings_ref[0] else ""
 
 
 settings_ref = [None]
 
 
-def ui_check(props, prop):
-    check_updates()
-    fill_packs(props)
-    return True
 
 
-def ui_install(props, prop):
-    pid = selected(props)
-    if pid:
-        install_pack(pid)                      # wenige MB; danach steht der neue Stand gleich in der Liste
-        fill_packs(props)
-    return True
 
 
-def ui_install_all(props, prop):
-    todo = [p["id"] for p in pack_list() if p.get("installed") and status_of(p).startswith("Update")]
-    if not todo:
-        log("Alle installierten Packs sind aktuell.")
-    for pid in todo:
-        install_pack(pid)
-    fill_packs(props)
-    return True
 
 
-def ui_remove(props, prop):
-    pid = selected(props)
-    if pid:
-        remove_pack(pid)
-        fill_packs(props)
-    return True
 
 
-def ui_setup(props, prop):
-    pid = selected(props)
-    if pid and installed(pid):
-        setup_collection(pid)
-    elif pid:
-        log("Erst installieren, dann einrichten.")
-    fill_packs(props)
-    return True
-
-
-def ui_open(props, prop):
-    pid = selected(props)
-    d = os.path.join(PACKS_DIR, pid) if pid and os.path.isdir(os.path.join(PACKS_DIR, pid)) else PACKS_DIR
-    try:
-        os.startfile(d)                       # Windows
-    except AttributeError:
-        webbrowser.open("file://" + d)
-    return False
 
 
 def ui_studio(props, prop):
@@ -1621,14 +1578,11 @@ def ui_web(*_):
     return False
 
 
-def ui_portal(*_):
-    webbrowser.open(PORTAL_STUDIO)
-    return False
 
 
 def script_description():
-    return ("<b>VOID Studio</b><br>Szenen-Packs verwalten und die VOID Twitch Bridge – Alerts, Sounds, Chat, "
-            "Ziele und Rückblick ohne Fremddienst.<br>Ausgaben unter „Skript-Protokoll“. "
+    return ("<b>VOID Studio</b><br>Szenen-Packs, Infos und die VOID Twitch Bridge – Alerts, Sounds, Chat, Ziele und "
+            "Rückblick ohne Fremddienst. Bedient wird alles in der Web-Oberfläche („VOID Studio öffnen“).<br>"
             "Hotkeys unter Einstellungen → Tastenkürzel („VOID: …“).")
 
 
@@ -1710,129 +1664,47 @@ def tip(prop, text):
 
 
 def script_properties():
+    """Das Skript-Fenster zeigt nur noch Status, den Weg zur Web-Oberfläche und die Technik. Packs, Infos, Alerts,
+    Twitch und alle anderen Einstellungen stehen in der Oberfläche (/studio)."""
     if mgr["index"] is None:
-        check_updates(timeout=8)               # erstes Öffnen: Liste sofort holen, sonst bliebe sie leer
+        check_updates(timeout=8)               # erstes Öffnen: Status und Studio-Update gleich zeigen
     p = obs.obs_properties_create()
     INFO = getattr(obs, "OBS_TEXT_INFO", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_text(p, "studio_info", studio_head(), INFO)
-
-    def packs(g):
-        tip(obs.obs_properties_add_list(g, "pack", "Pack", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING),
-            "Pack auswählen, dann installieren, aktualisieren, Ordner öffnen oder entfernen.")
-        tip(obs.obs_properties_add_button(g, "m_install", "Installieren / aktualisieren", ui_install),
-            "Ein neues Pack wird dabei gleich als Szenensammlung in OBS eingerichtet.")
-        tip(obs.obs_properties_add_button(g, "m_setup", "In OBS einrichten", ui_setup),
-            "Legt die Szenensammlung des Packs in OBS an oder erneuert sie nach einem Update. "
-            "Kamera, Spielaufnahme und eigene Quellen bleiben. Nicht für die gerade aktive Sammlung.")
-        tip(obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (import.json)", ui_open),
-            "Darin liegt import.json, falls du lieber über Szenensammlung → Importieren gehst.")
-        obs.obs_properties_add_button(g, "m_remove", "Entfernen", ui_remove)
-        obs.obs_properties_add_button(g, "m_check", "Nach Updates suchen", ui_check)
-        obs.obs_properties_add_button(g, "m_all", "Alle Pack-Updates installieren", ui_install_all)
-        obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
-        other = running_elsewhere()
-        if other:
-            obs.obs_properties_add_text(g, "studio_where", (
-                f"Dieses Skript läuft aus {other}. Updates landen in beiden Dateien, sicherer ist aber die zentrale Kopie: "
-                f"unter Werkzeuge → Skripte dieses Skript entfernen und mit + {STUDIO_PATH} hinzufügen. "
-                "Die Packs nutzen sie ohnehin."), INFO)
-            obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
     def webui(g):
         local, remote = web_urls()
         if settings_ref[0] is not None:
             obs.obs_data_set_string(settings_ref[0], "web_url", local)
+        obs.obs_properties_add_button(g, "w_open", "VOID Studio öffnen", ui_web)
         tip(obs.obs_properties_add_text(g, "web_url", "Adresse", obs.OBS_TEXT_DEFAULT),
             "Zum Kopieren. Als Dock: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse.")
-        obs.obs_properties_add_button(g, "w_open", "Im Browser öffnen", ui_web)
         tip(obs.obs_properties_add_bool(g, "remote_on", "Auch im Heimnetz erreichbar (Handy, Tablet)"),
-            "Andere Geräte im selben Netz öffnen die Oberfläche mit Schlüssel. "
-            "Den Link zeigt die Oberfläche unter Einstellungen.")
+            "Andere Geräte im selben Netz öffnen die Oberfläche mit Schlüssel. Den Link zeigt die Oberfläche unter Einstellungen.")
         if remote:
             obs.obs_properties_add_text(g, "w_remote", "Im Heimnetz: " + "  ·  ".join(remote), INFO)
-
-    def twitch(g):
-        obs.obs_properties_add_text(g, "twitch_status", twitch_status(), INFO)
-        tip(obs.obs_properties_add_button(g, "login", "Mit Twitch verbinden", on_login),
-            "Öffnet die Bestätigung bei Twitch im Browser. Gilt für alle Packs.")
-        obs.obs_properties_add_button(g, "logout", "Abmelden", on_logout)
-        tip(obs.obs_properties_add_button(g, "portal", "Stream-Statistiken im Portal öffnen", ui_portal),
-            "my.void.cx/studio: Zuschauer, Chat, Follower und Abos deiner Streams.")
-
-    def alerts(g):
-        obs.obs_properties_add_int_slider(g, "volume", "Lautstärke", 0, 100, 1)
-        obs.obs_properties_add_button(g, "c_replay", "Letzten Alert wiederholen", ctl_replay)
-        obs.obs_properties_add_button(g, "c_pause", "Alerts pausieren / fortsetzen", ctl_pause)
-        obs.obs_properties_add_button(g, "c_skip", "Aktuellen Alert überspringen", ctl_skip)
-
-    def tests(g):
-        for key, label in [("follow", "Follow"), ("sub", "Abo"), ("resub", "Abo verlängert"), ("gift", "Geschenk-Abos"),
-                           ("cheer", "Bits"), ("raid", "Raid"), ("redeem", "Kanalpunkte")]:
-            obs.obs_properties_add_button(g, "t_" + key, label,
-                                          lambda props, prop, k=key: (alert(dict(SAMPLES[k]), count=False), False)[1])
-        obs.obs_properties_add_button(g, "t_chat", "Chatnachricht", test_chat)
-
-    def goals(g):
-        obs.obs_properties_add_int(g, "goal_follow", "Follower-Ziel", 0, 10000000, 1)
-        obs.obs_properties_add_int(g, "goal_sub", "Abo-Ziel", 0, 1000000, 1)
-        obs.obs_properties_add_int(g, "goal_bits", "Bits-Ziel", 0, 100000000, 100)
-        obs.obs_properties_add_button(g, "c_bits", "Bits-Ziel zurücksetzen", ctl_reset_bits)
-
-    def scenes(g):
-        tip(obs.obs_properties_add_bool(g, "show_latest", "Letzte Unterstützer an der Game-Kamera zeigen"),
-            "Erscheint in den Spielszenen über den Zielen.")
-        for k, label in [("follow", "Follow"), ("sub", "Abo"), ("gift", "Geschenk"), ("cheer", "Bits"), ("raid", "Raid")]:
-            obs.obs_properties_add_bool(g, "latest_" + k, "   " + label)
-        tip(obs.obs_properties_add_button(g, "c_session", "Session-Rückblick zurücksetzen", ctl_reset_session),
-            "Der Rückblick in „Stream endet“ zählt ab hier neu.")
-
-    def chat(g):
-        tip(obs.obs_properties_add_text(g, "ignore", "Ausgeblendete Namen", obs.OBS_TEXT_DEFAULT),
-            "Kommagetrennt, z. B. Bots wie streamelements, nightbot.")
-        obs.obs_properties_add_bool(g, "hide_cmd", "Befehle mit ! ausblenden")
-
-    def telemetry(g):
-        obs.obs_properties_add_bool(g, "tele_on", "Spiel-Telemetrie weiterreichen")
-        tip(obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT),
-            "Funbit-Format, z. B. http://127.0.0.1:25555/api/ets2/telemetry")
-
-    def irl_group(g):
-        tip(obs.obs_properties_add_bool(g, "irl_auto", "Bei Abbruch auf „Verbindung weg“ schalten"),
-            "Nur aus den Kamera-Szenen (Unterwegs, Zwei Kameras, Bild im Bild, Vier Kameras, Just Chatting); "
-            "kommt das Signal zurück, geht es in die Szene von vorher.")
-        tip(obs.obs_properties_add_text(g, "irl_source", "Kamera-Quelle", obs.OBS_TEXT_DEFAULT),
-            "Name der Medienquelle, die überwacht wird. Standard: Kamera 1")
-        obs.obs_properties_add_int(g, "irl_delay", "Umschalten nach (Sekunden)", 1, 60, 1)
-        obs.obs_properties_add_int(g, "irl_back", "Zurück nach stabilem Signal (Sekunden)", 1, 60, 1)
+        up = obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
+        obs.obs_property_set_visible(up, False)              # fill_packs zeigt ihn, wenn es ein Update gibt
+        other = running_elsewhere()
+        if other:
+            obs.obs_properties_add_text(g, "studio_where", (
+                f"Dieses Skript läuft aus {other}. Updates landen in beiden Dateien, sicherer ist aber die zentrale Kopie: "
+                f"unter Werkzeuge → Skripte dieses Skript entfernen und mit + {STUDIO_PATH} hinzufügen."), INFO)
+            obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
     def tech(g):
         tip(obs.obs_properties_add_int(g, "port", "Lokaler Port", 1024, 65535, 1),
-            "Über diesen Port holen sich die Szenen die Live-Daten. Nur ändern, wenn 8787 belegt ist.")
+            "Über diesen Port laufen Oberfläche und Szenen. Nur ändern, wenn 8787 belegt ist.")
         tip(obs.obs_properties_add_text(g, "repo", "Pack-Quelle", obs.OBS_TEXT_DEFAULT),
             "GitHub owner/repo oder eine eigene URL. Standard: " + DEFAULT_REPO)
 
-    group(p, "g_packs", "Szenen-Packs",
-          "Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Texte wie Spielname oder Ort "
-          "trägst du in der Web-Oberfläche unter Infos ein.", packs)
     group(p, "g_web", "Web-Oberfläche",
-          "Alles aus diesem Fenster und die Infos (Spielname, Ort …) übersichtlich im Browser oder als Dock in OBS.", webui)
-    group(p, "g_twitch", "Twitch", None, twitch)
-    group(p, "g_alerts", "Alerts",
-          "Einblendung mit Sound bei Follow, Abo, Bits, Raid und Kanalpunkten. Eigene Sounds: " + SOUND_DIR, alerts)
-    group(p, "g_tests", "Testen", "Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.", tests)
-    group(p, "g_goals", "Ziele", "Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.", goals)
-    group(p, "g_scenes", "Spielszenen und Rückblick", None, scenes)
-    group(p, "g_chat", "Chat", None, chat)
-    group(p, "g_tele", "Telemetrie (ETS2/ATS)", "Für die Szene „ETS2 Telemetrie“; braucht einen laufenden Telemetrie-Server.", telemetry)
-    group(p, "g_irl", "IRL", "Für das IRL-Pack: überwacht die Kamera-Quelle und schaltet bei einem Abbruch selbst um.", irl_group)
+          "Packs, Infos (Spielname, Ort …), Alerts, Ziele, Twitch und alle Einstellungen – im Browser oder als Dock in OBS.", webui)
     group(p, "g_tech", "Technik", None, tech)
     fill_packs(p)
     return p
 
 
-def on_login(props, prop):
-    threading.Thread(target=device_login, daemon=True).start()
-    return False
 
 
 def on_logout(props, prop):
@@ -2141,6 +2013,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
           <button class="btn btn-sm btn-primary" data-act="twitch_login">Mit Twitch verbinden</button>
           <button class="btn btn-sm" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
         </div>
+        <p class="small muted">Stream-Statistiken, Go-Live im Discord und mehr: <a id="portal-link" target="_blank" rel="noopener">VOID Studio im Portal</a></p>
       </div>
       <div class="card stack">
         <h2>Chat</h2>
@@ -2381,6 +2254,7 @@ function render(){
     </div></div></div>`}).join('')||'<p class="muted">Pack-Liste wird geladen …</p>';
   /* Einstellungen */
   $('#twitch-state').textContent=tw.status;
+  $('#portal-link').href=S.portal;
   $('#device').classList.toggle('hidden',!tw.device);
   if(tw.device){$('#device-code').textContent=tw.device.code;$('#device-link').href=tw.device.url;$('#device-link').textContent=tw.device.url.replace(/^https?:\/\//,'')}
   $$('[data-set]').forEach(i=>setVal(i,S.settings[i.dataset.set]));

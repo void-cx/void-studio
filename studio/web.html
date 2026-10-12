@@ -215,6 +215,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
           <button class="btn btn-sm btn-primary" data-act="twitch_login">Mit Twitch verbinden</button>
           <button class="btn btn-sm" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
         </div>
+        <p class="small muted">Stream-Statistiken, Go-Live im Discord und mehr: <a id="portal-link" target="_blank" rel="noopener">VOID Studio im Portal</a></p>
       </div>
       <div class="card stack">
         <h2>Chat</h2>
@@ -455,6 +456,7 @@ function render(){
     </div></div></div>`}).join('')||'<p class="muted">Pack-Liste wird geladen …</p>';
   /* Einstellungen */
   $('#twitch-state').textContent=tw.status;
+  $('#portal-link').href=S.portal;
   $('#device').classList.toggle('hidden',!tw.device);
   if(tw.device){$('#device-code').textContent=tw.device.code;$('#device-link').href=tw.device.url;$('#device-link').textContent=tw.device.url.replace(/^https?:\/\//,'')}
   $$('[data-set]').forEach(i=>setVal(i,S.settings[i.dataset.set]));
