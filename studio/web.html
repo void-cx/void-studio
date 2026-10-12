@@ -40,6 +40,7 @@ nav.tabs button{display:flex;align-items:center;gap:8px;color:var(--muted);paddi
 nav.tabs button:hover{color:var(--ink);background:var(--raised)}
 nav.tabs button.on{color:var(--ink);background:var(--violet-tint);box-shadow:inset 2px 0 0 var(--violet)}
 .side-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.side-foot .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:block}
 main{padding:32px 40px 80px;min-width:0;max-width:1180px}
 .page-head{margin-bottom:24px}.page-head p{margin-top:6px;color:var(--muted);max-width:72ch}
 @media (max-width:760px){
@@ -148,7 +149,8 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
       <div class="card stack">
-        <div><h2>Alerts</h2><p class="lead" id="alert-state"></p></div>
+        <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
+        <p class="lead" id="alert-state" style="margin:0"></p>
         <div class="field"><label>Lautstärke <span id="vol-v" class="muted"></span></label><input type="range" min="0" max="100" id="volume"></div>
         <div class="row">
           <button class="btn btn-sm" data-act="pause" id="pause-btn">Pausieren</button>
@@ -227,7 +229,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
         <label class="check"><input type="checkbox" data-set="show_latest">Letzte Unterstützer an der Game-Kamera zeigen</label>
         <div id="latest-items" class="stack" style="gap:8px;padding-left:28px"></div>
       </div>
-      <div class="card stack">
+      <div class="card stack" id="set-irl">
         <div><h2>IRL</h2><p class="lead">Überwacht die Kamera-Quelle und schaltet bei einem Abbruch auf „Verbindung weg“ und zurück.</p></div>
         <label class="check"><input type="checkbox" data-set="irl_auto">Bei Abbruch automatisch umschalten</label>
         <div class="field"><label>Kamera-Quelle</label><input type="text" data-set="irl_source"></div>
@@ -236,7 +238,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
           <div class="field"><label>Zurück nach (s)</label><input type="number" min="1" max="60" data-set="irl_back"></div>
         </div>
       </div>
-      <div class="card stack">
+      <div class="card stack" id="set-tele">
         <h2>Telemetrie (ETS2/ATS)</h2>
         <label class="check"><input type="checkbox" data-set="tele_on">Spiel-Telemetrie weiterreichen</label>
         <div class="field"><label>Telemetrie-URL</label><input type="text" data-set="tele_url"></div>
@@ -296,23 +298,26 @@ function setVal(inp,v){if(document.activeElement===inp||busy.has(inp))return;
 function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
 
 /* ---------- Infos (je Pack, gespeichert in VOID Studio) ---------- */
-let infoKeys='',infoPack=null;
-try{infoPack=localStorage.getItem('voidInfoPack')}catch(_){}
-$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;try{localStorage.setItem('voidInfoPack',infoPack)}catch(_){};infoKeys='';renderInfos()};
+/* Folgt der aktiven Szenensammlung: wechselt sie in OBS, springt die Auswahl mit. Ein anderes Pack lässt sich
+   wählen; das gilt bis zum nächsten Wechsel der Sammlung. */
+let infoKeys='',infoPack=null,lastActive;
+$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;infoKeys='';renderInfos()};
 function renderInfos(){
   const packs=S.infos||[],form=$('#infos-form'),sel=$('#infos-pack');
   if(!packs.length){$('#infos-title').textContent='Infos';form.innerHTML='';infoKeys='';
     $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';$('#infos-pack-row').classList.add('hidden');$('#geo').classList.add('hidden');return}
   /* Vorauswahl: zuletzt gewählt, sonst das Pack der aktiven Szenensammlung, sonst das erste */
-  if(!packs.some(p=>p.id===infoPack))infoPack=(S.pack&&packs.some(p=>p.id===S.pack.id))?S.pack.id:packs[0].id;
+  const active=S.pack&&packs.some(p=>p.id===S.pack.id)?S.pack.id:null;
+  if(active!==lastActive){lastActive=active;if(active)infoPack=active}
+  if(!packs.some(p=>p.id===infoPack))infoPack=active||packs[0].id;
   const opts=packs.map(p=>`${p.id}:${p.name}`).join('|');
   if(sel.dataset.o!==opts){sel.dataset.o=opts;sel.innerHTML=packs.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
   sel.value=infoPack;$('#infos-pack-row').classList.toggle('hidden',packs.length<2);
   const pack=packs.find(p=>p.id===infoPack),list=[...pack.fields.filter(f=>!f.multiline),...pack.fields.filter(f=>f.multiline)];
   renderGeo(pack);
   $('#infos-title').textContent=`Infos · ${pack.name}`;
-  $('#infos-sub').textContent='Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+
-    (S.pack&&S.pack.id!==pack.id?` Gerade aktiv in OBS: ${S.pack.name}.`:'');
+  $('#infos-sub').textContent=(active===pack.id?'Für die aktive Szenensammlung in OBS. ':active?`Aktiv in OBS ist ${S.pack.name} – hier bearbeitest du ein anderes Pack. `:'Die aktive Szenensammlung gehört zu keinem Pack. ')+
+    'Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.';
   const keys=pack.id+'|'+list.map(i=>i.label).join('|');
   if(keys!==infoKeys){
     infoKeys=keys;form.innerHTML='';
@@ -437,7 +442,13 @@ function render(){
   const ss=S.live.session||{},cnt=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
   $('#session').innerHTML=[['Neue Follower',(ss.follows||[]).length],['Abos',(ss.subs||[]).length],['Verschenkte Abos',cnt(ss.gifts)],['Bits',cnt(ss.bits)],
     ['Raids',(ss.raids||[]).length],['Follower gesamt',S.live.followers],['Abonnenten',S.live.subs]].map(([k,v])=>`<dt>${k}</dt><dd>${v==null?'–':num(v)}</dd>`).join('');
-  const irlOn=S.irl.auto||(S.pack&&S.pack.id==='irl');
+  const pid=S.pack&&S.pack.id;
+  const irlOn=S.irl.auto||pid==='irl';
+  $('#set-irl').classList.toggle('hidden',!irlOn);
+  $('#set-tele').classList.toggle('hidden',!(S.settings.tele_on||pid==='ets2'));
+  const n=S.listeners||0;$('#listeners').textContent=n===1?'1 Szene verbunden':`${n} Szenen verbunden`;
+  $('#listeners').className='chip chip-sm '+(n?'chip-ok':'chip-warn');
+  $('#listeners').title=n?'So viele Browserquellen hören gerade auf VOID Studio.':'Keine Szene verbunden – Alerts kommen nirgends an. Ist die Pack-Sammlung in OBS aktiv?';
   $('#irl-card').classList.toggle('hidden',!irlOn);
   if(irlOn){const since=S.irl.since?Math.max(0,Math.round(Date.now()/1000-S.irl.since)):0;
     $('#irl-state').innerHTML=S.irl.live==null?`„${esc(S.irl.source)}“ wird überwacht, sobald die Quelle in der Sammlung ist.`
