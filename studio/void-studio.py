@@ -26,7 +26,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.4"
+STUDIO_VERSION = "1.0.5"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -228,14 +228,23 @@ def telemetry_loop():
 
 # ---------------------------------------------------------------- Steuerung
 # ---------- IRL: Verbindungsabbruch erkennen und Szene wechseln ----------
-# Läuft im OBS-Takt (timer_add), nicht in einem eigenen Thread: Szenen dürfen nur von dort umgeschaltet werden.
+# Wichtig: Skript-Timer laufen im Grafik-Thread von OBS und halten dabei die Python-Sperre. Alles, was dort auf die
+# Oberfläche wartet (Szene umschalten, Szene anlegen), blockiert OBS, sobald die Oberfläche ihrerseits ein Python-
+# Ereignis auslöst. Darum liest irl_tick nur und schaltet über einen eigenen Thread, der die Sperre abgibt (ctypes).
 IRL_SCENE = "Verbindung weg"
 IRL_LIVE_SCENES = ("Unterwegs", "Zwei Kameras", "Bild im Bild", "Vier Kameras", "Just Chatting")
-irl = {"live": None, "since": None, "changed": 0.0, "prev": None}
+irl = {"live": None, "since": None, "changed": 0.0, "prev": None, "busy_until": 0.0}
 
 
 def irl_snapshot():
     return {"type": "irl", "live": bool(irl["live"]), "since": irl["since"]}
+
+
+def source_exists(name):
+    src = obs.obs_get_source_by_name(name)
+    if src:
+        obs.obs_source_release(src)
+    return bool(src)
 
 
 def source_live(name):
@@ -250,24 +259,66 @@ def source_live(name):
 
 
 def current_scene_name():
-    src = obs.obs_frontend_get_current_scene()
-    if not src:
+    """Szene im Programm, direkt aus libobs (Übergang auf Kanal 0), ohne die Oberfläche zu fragen."""
+    tr = obs.obs_get_output_source(0)
+    if not tr:
         return None
     try:
-        return obs.obs_source_get_name(src)
+        src = obs.obs_transition_get_active_source(tr)
+        if not src:
+            return None
+        try:
+            return obs.obs_source_get_name(src)
+        finally:
+            obs.obs_source_release(src)
     finally:
-        obs.obs_source_release(src)
+        obs.obs_source_release(tr)
+
+
+NATIVE = {}
+
+
+def native():
+    """libobs und Frontend-API über ctypes: ctypes gibt die Python-Sperre ab, solange OBS die Szene wechselt."""
+    if "lib" not in NATIVE:
+        try:
+            import ctypes
+            if sys.platform == "win32":
+                lib, fe = ctypes.CDLL("obs.dll"), ctypes.CDLL("obs-frontend-api.dll")
+            else:
+                lib = fe = ctypes.CDLL(None)            # beide sind im OBS-Prozess schon geladen
+            lib.obs_get_source_by_name.restype = ctypes.c_void_p
+            lib.obs_get_source_by_name.argtypes = [ctypes.c_char_p]
+            lib.obs_source_release.argtypes = [ctypes.c_void_p]
+            fe.obs_frontend_set_current_scene.argtypes = [ctypes.c_void_p]
+            NATIVE["lib"] = (lib, fe)
+        except Exception as e:
+            NATIVE["lib"] = None
+            log(f"IRL: automatisches Umschalten nicht möglich ({e}).")
+    return NATIVE["lib"]
 
 
 def switch_scene(name):
-    src = obs.obs_get_source_by_name(name)
+    """In einem eigenen Thread aufrufen, nie aus einem Timer."""
+    n = native()
+    if not n:
+        return False
+    lib, fe = n
+    src = lib.obs_get_source_by_name(name.encode("utf-8"))
     if not src:
         return False
     try:
-        obs.obs_frontend_set_current_scene(src)
+        fe.obs_frontend_set_current_scene(src)
         return True
     finally:
-        obs.obs_source_release(src)
+        lib.obs_source_release(src)
+
+
+def switch_later(name, note):
+    def run():
+        if switch_scene(name):
+            log(note)
+    threading.Thread(target=run, daemon=True).start()
 
 
 def irl_tick():
@@ -282,13 +333,15 @@ def irl_tick():
             irl.update(live=live, changed=now, since=None if live else int(now))
             send_all(irl_snapshot())                     # „Verbindung weg“ zeigt, seit wann, und meldet die Rückkehr
         held = now - irl["changed"]
+        if now < irl["busy_until"]:                       # Umschalten läuft noch
+            return
         scene = current_scene_name()
-        if not live and held >= cfg["irl_delay"] and scene in IRL_LIVE_SCENES and switch_scene(IRL_SCENE):
-            irl["prev"] = scene
-            log(f"IRL: {cfg['irl_source']} ohne Signal – auf „{IRL_SCENE}“ geschaltet.")
-        elif live and held >= cfg["irl_back"] and scene == IRL_SCENE and irl["prev"] and switch_scene(irl["prev"]):
-            log(f"IRL: Signal wieder da – zurück auf „{irl['prev']}“.")
-            irl["prev"] = None
+        if not live and held >= cfg["irl_delay"] and scene in IRL_LIVE_SCENES and source_exists(IRL_SCENE):
+            irl.update(prev=scene, busy_until=now + 3)
+            switch_later(IRL_SCENE, f"IRL: {cfg['irl_source']} ohne Signal – auf „{IRL_SCENE}“ geschaltet.")
+        elif live and held >= cfg["irl_back"] and scene == IRL_SCENE and irl["prev"]:
+            back, irl["prev"], irl["busy_until"] = irl["prev"], None, now + 3
+            switch_later(back, f"IRL: Signal wieder da – zurück auf „{back}“.")
     except Exception as e:                                # ein Fehler im Takt darf OBS nicht stören
         log(f"IRL: {e}")
 
@@ -1030,7 +1083,7 @@ INFO_PREFIX = "Info · "
 INFO_DEFAULT = ["Titel", "Statuszeilen"]
 INFO_HINT = ("Doppelklick auf eine Info-Quelle und Text eintragen – die Overlays übernehmen ihn sofort. "
              "Leer = Standard. Mehrere Zeilen = Wechsel bzw. Liste. Diese Szene nicht live zeigen.")
-info = {"data": {}, "ticks": 0}
+info = {"data": {}}
 info_lock = threading.Lock()
 
 
@@ -1058,12 +1111,9 @@ def source_text(src):
 
 
 def info_tick():
-    """Texte der Info-Quellen lesen; bei einer Änderung an alle Szenen schicken."""
-    # ensure_infos läuft hier im OBS-Takt; Quellen anlegen ist dort erlaubt, die Oberfläche zieht nach
+    """Texte der Info-Quellen lesen; bei einer Änderung an alle Szenen schicken. Nur lesen: läuft im Grafik-Thread
+    (siehe IRL oben), Szenen oder Quellen anlegen darf hier nie passieren."""
     try:
-        info["ticks"] += 1
-        if info["ticks"] == 3:                    # einmal kurz nach dem Laden: die Sammlung ist dann vollständig da
-            ensure_infos()
         data = {}
         def read(src):
             n = obs.obs_source_get_name(src) or ""
@@ -1150,7 +1200,10 @@ def _ensure_infos(announce):
 
 def on_frontend_event(event):
     if event in (obs.OBS_FRONTEND_EVENT_FINISHED_LOADING, obs.OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED):
-        info["ticks"] = 0                       # nach dem Wechsel erneut prüfen (im Takt, wenn alles geladen ist)
+        try:                                    # Oberflächen-Thread: hier darf die Infos-Szene entstehen
+            ensure_infos()
+        except Exception as e:
+            log(f"Infos: {e}")
 
 
 def install_pack(pid):
