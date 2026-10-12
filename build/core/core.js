@@ -54,9 +54,14 @@ async function cycle(node,src,every=5200){
 }
 /* Countdown mit &min=5: ruft tick(sekunden) jede Viertelsekunde, 0 heißt „gleich live“ */
 function countdown(tick){
-  const min=parseFloat(P.get('min'));if(!(min>0))return false;
-  const end=Date.now()+min*60000;
+  const min=parseFloat(P.get('min')),until=parseFloat(P.get('until'));if(!(min>0)&&!(until>0))return false;
+  const end=until>0?until:Date.now()+min*60000;
   const f=()=>tick(Math.max(0,Math.round((end-Date.now())/1000)));f();setInterval(f,250);return true;
+}
+/* Pausen-Timer aus VOID Studio (&back=Zeitpunkt): tick(sekunden) bis 0 */
+function pauseTimer(tick){
+  const back=parseFloat(P.get('back'));if(!(back>0))return false;
+  const f=()=>tick(Math.max(0,Math.round((back-Date.now())/1000)));f();setInterval(f,250);return true;
 }
 const mmss=s=>`${String(s/60|0).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 
@@ -143,7 +148,7 @@ function chime(type,vol){
   }catch(_){}
 }
 function playSound(type){
-  const v=(STATE.volume??70)/100;if(v<=0)return;
+  const v=(STATE.volume??70)/100*((STATE.alert_volumes||{})[type]??100)/100;if(v<=0)return;
   const src=STATE.sounds&&(STATE.sounds[type]||STATE.sounds.default);
   if(src){const a=new Audio(src);a.volume=v;a.play().catch(()=>chime(type,v))}else chime(type,v);
 }
@@ -157,9 +162,9 @@ function pushAlert(e){if(!ALERTS||!FMT[e.type]||!THEME.alert)return;AQ.push(e);i
 async function nextAlert(){
   if(!AQ.length){busy=false;return}busy=true;
   while(STATE.paused)await wait(300);
-  const e=AQ.shift(),[kind,detail]=FMT[e.type](e);
+  const e=AQ.shift(),f0=FMT[e.type](e),kind=(e.texts&&e.texts[0])||f0[0],detail=(e.texts&&e.texts[1])||f0[1];
   try{await THEME.alert(e,{kind,detail,big:isBig(e),name:(e.user||'Anonym').slice(0,25),
-    hold:async()=>{await holdFor(e.text?8000:5500);skipNow=null},sound:()=>playSound(e.type)})}catch(_){}
+    hold:async()=>{await holdFor(e.hold||(e.text?8000:5500));skipNow=null},sound:()=>e.sound?playUrl(e.sound):playSound(e.type)})}catch(_){}
   await wait(500);nextAlert();
 }
 
@@ -270,8 +275,14 @@ function chatRemove(sel){chatLogs.forEach(L=>L.box.querySelectorAll(sel).forEach
    laufenden Alert). Leerer Text = Parameter bzw. Standard. Mehrere Zeilen werden zu A|B|C. */
 const INFO_KEYS={'Titel':'title','Statuszeilen':'sub','Charakter':'char','Spiel':'game','Entwickler':'dev','Status':'status',
   'Wunschliste':'wish','Spiele des Abends':'games','Strecke':'track','Auto':'car','Serie':'series','Ort':'place','Wetter-Ort':'wx',
-  'Splash':'splash','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
+  'Splash':'splash','_start':'until','_pause':'back','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
 const PACK_ID=((location.pathname.match(/\/packs\/([^\/]+)\/[^\/]*$/)||[])[1]||'').replace(/^void-theme-/,'');
+/* Sound ohne Alert (Kanalpunkte-Aktion aus VOID Studio) */
+function playUrl(url){const v=(STATE.volume??70)/100;if(v<=0||!url)return;const a=new Audio(url);a.volume=v;a.play().catch(()=>{})}
+/* Countdown (Start) und Pausen-Timer aus VOID Studio: als Parameter until/back, nur in der passenden Szene */
+function withTimers(d,t){d=Object.assign({},d);t=t||{};
+  if(SCENE==='start'&&t.start>Date.now())d._start=String(t.start);
+  if(SCENE==='pause'&&t.pause>Date.now())d._pause=String(t.pause);return d}
 function applyInfo(d){
   const want={};
   Object.entries(d||{}).forEach(([label,raw])=>{const k=INFO_KEYS[label];if(!k)return;
@@ -289,6 +300,8 @@ function applyInfo(d){
   go();
 }
 
+/*@OVERLAY@*/
+
 /* ---------- Verbindung zur Bridge ---------- */
 function onMessage(e){
   switch(e.type){
@@ -301,7 +314,9 @@ function onMessage(e){
     case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
     case 'telemetry':hooks.tele.forEach(f=>f(e.data));break;
     case 'irl':hooks.irl.forEach(f=>f(e));break;
-    case 'infos':if(PACK_ID&&e.packs)applyInfo(e.packs[PACK_ID]||{});break;
+    case 'infos':if(PACK_ID&&e.packs)applyInfo(withTimers(e.packs[PACK_ID]||{},e.timers));break;
+    case 'sound':playUrl(e.url);break;
+    case 'overlay':if(e.o)ovlHost(e.o);break;
     default:pushAlert(e);
   }
 }

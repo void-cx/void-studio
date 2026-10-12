@@ -34,6 +34,7 @@
 @font-face{font-family:"Space Grotesk";font-weight:700;src:url(data:font/woff2;base64,__SG7__) format("woff2");font-display:block}
 @font-face{font-family:"JetBrains Mono";font-weight:500;src:url(data:font/woff2;base64,__JB5__) format("woff2");font-display:block}
 :root{
+  --ovl-font:"Space Grotesk"; --ovl-acc:var(--lilac);
   --night:#07071A; --glass:rgba(8,8,24,.72); --glass2:rgba(8,8,24,.86); --line:rgba(255,255,255,.12);
   --white:#F2F3FA; --mute:#A3A6C2; --violet:#B303F8; --blue:#1141E4; --lilac:#D27BFF; --sky:#7C9BFF; --red:#FF3B4E; --green:#3BE39A;
 }
@@ -241,7 +242,8 @@ function start(){
 }
 function pause(){
   contours(stage);chips(stage).style.cssText='left:120px;top:80px';
-  hero('// kurz durchatmen','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines()]);
+  const h=hero('// kurz durchatmen','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines()]);
+  const ct=put(h,'ct');pauseTimer(s=>ct.textContent=s>0?`Zurück in ${mmss(s)}`:'Gleich zurück');
   const m=makeMark({cls:'heromark',d:300,t:800});stage.appendChild(m);
   const g=put(stage,'goals','','position:absolute;left:120px;bottom:90px;width:460px');goalsInto(g);
 }

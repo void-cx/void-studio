@@ -75,6 +75,7 @@ def irl_scenes(cfg,br,src,item,scene):
 
 VER=json.load(open('versions.json'))
 CORE=open('core/core.js',encoding='utf-8').read()
+OVERLAY=open('core/overlay.js',encoding='utf-8').read()
 built=[]
 for cfg in themes.load(ONLY):
     key=cfg['id']
@@ -85,6 +86,8 @@ for cfg in themes.load(ONLY):
     if cfg.get('core'):                 # eigenes Template: gemeinsamer Kern (Bridge, Alerts, Chat, Ziele) wird eingesetzt
         assert '/*@CORE@*/' in t, cfg['template']+': /*@CORE@*/ fehlt'
         t=t.replace('/*@CORE@*/',CORE)
+    assert t.count('/*@OVERLAY@*/')==1, cfg['template']+': /*@OVERLAY@*/ fehlt'   # Einblendungen aus VOID Studio
+    t=t.replace('/*@OVERLAY@*/',OVERLAY)
     for ph,(name,srcf) in cfg['fonts'].items():
         shutil.copy(srcf,f'{d}/assets/fonts/{name}')
         t=t.replace(f'data:font/woff2;base64,{ph}',f'assets/fonts/{name}')

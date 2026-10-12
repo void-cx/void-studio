@@ -108,6 +108,20 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;font-size:14px}
 .toast.on{opacity:1}
 .hidden{display:none!important}
+/* Einblendungen: Editor mit Vorschau im 16:9-Rahmen (1920 × 1080, skaliert) */
+.ov-layout{display:grid;gap:24px;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:start}
+.ov-side{position:sticky;top:16px}
+@media (max-width:900px){.ov-layout{grid-template-columns:minmax(0,1fr)}.ov-side{position:static;order:-1}}
+.ov-preview{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:var(--r-md);border:1px solid var(--line);
+  background:radial-gradient(60% 80% at 20% 30%,#2a1d55 0,transparent 70%),radial-gradient(60% 80% at 85% 70%,#14306b 0,transparent 70%),#0b0c1d}
+.ov-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;font-family:var(--sans)}
+.posgrid{display:grid;grid-template-columns:repeat(3,40px);gap:6px}
+.posgrid button{height:40px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--raised);cursor:pointer;padding:0}
+.posgrid button.on{background:var(--violet);border-color:var(--violet)}
+.posgrid button[disabled]{opacity:.35;cursor:not-allowed}
+.ov-item{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+.ov-item:first-child{border-top:0;padding-top:0}
+.thumb{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--r-sm);background:var(--raised);flex:none}
 </style>
 </head>
 <body>
@@ -117,6 +131,8 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   <nav class="tabs" id="tabs">
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
+    <button data-tab="alerts">Alerts</button>
+    <button data-tab="overlays">Einblendungen</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -146,8 +162,32 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   </section>
 
   <section id="tab-live" class="hidden">
-    <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
+    <div class="page-head"><h1>Live</h1><p>OBS steuern, Stream im Blick, Alerts, Ziele, Timer und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Stream</h2><span class="chip chip-sm" id="stream-chip"></span></div>
+        <dl class="meta" id="stream-stats"></dl>
+        <div class="row"><button class="btn btn-sm" id="stream-btn"></button><button class="btn btn-sm" id="rec-btn"></button></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Szenen</h2><p class="lead">Ein Klick schaltet in OBS um.</p></div>
+        <div class="row" id="scene-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Audio</h2><p class="lead">Quellen stumm schalten und wieder an.</p></div>
+        <div class="row" id="audio-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Timer</h2><p class="lead">Countdown in „Stream startet“, Pausen-Timer in „Kurze Pause“.</p></div>
+        <div class="field"><label>Countdown bis Stream-Start <span class="muted" id="timer-start-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-start-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="start" data-min="#timer-start-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="start">Stopp</button></div></div>
+        <div class="field"><label>Pausen-Timer <span class="muted" id="timer-pause-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-pause-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="pause" data-min="#timer-pause-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="pause">Stopp</button></div></div>
+      </div>
       <div class="card stack">
         <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
         <p class="lead" id="alert-state" style="margin:0"></p>
@@ -187,6 +227,84 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       <div class="card stack hidden" id="irl-card">
         <h2>IRL</h2>
         <p id="irl-state"></p>
+        <div class="row" id="irl-cams"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-alerts" class="hidden">
+    <div class="page-head"><h1>Alerts</h1><p>Je Alert-Art an/aus, Lautstärke, Mindestwert, eigene Texte und Sounds; dazu Aktionen für Kanalpunkte. Gilt für alle Packs.</p></div>
+    <div class="grid" id="alert-cards"></div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card stack span-all">
+        <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: eigene Einblendung zeigen, Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten. Einblendungen gestaltest du unter „Einblendungen“.</p>
+        <div id="rules" class="stack"></div>
+        <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
+      </div>
+      <div class="card stack span-all">
+        <div><h2>Sounds für Kanalpunkte</h2><p class="lead" style="margin:0">MP3, OGG oder WAV bis 5 MB. Die Sounds je Alert-Art stehen oben bei der jeweiligen Art.</p></div>
+        <div id="extra-sounds" class="stack" style="gap:8px"></div>
+        <div><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="" hidden></label></div>
+      </div>
+    </div>
+    <datalist id="reward-titles"></datalist>
+  </section>
+
+  <section id="tab-overlays" class="hidden">
+    <div class="page-head"><h1>Einblendungen</h1><p>Eigene Einblendungen für Kanalpunkte und Alerts: Vorlage wählen, dann Texte, Bild oder Video, Position, Größe, Farbe, Animation und Sound einstellen. Die Packs zeigen sie in ihrer Schrift. Verknüpfen unter „Alerts“.</p></div>
+    <div class="stack">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Deine Einblendungen</h2><button class="btn btn-sm btn-primary" id="ov-new">Neue Einblendung</button></div>
+        <div id="ov-list"></div>
+      </div>
+      <div class="card hidden" id="ov-editor">
+        <div class="ov-layout">
+          <div class="stack" id="ov-form">
+            <h2 id="ov-head">Einblendung bearbeiten</h2>
+            <div class="field"><label>Name</label><input type="text" data-ov="name" maxlength="60"></div>
+            <div class="field"><label>Vorlage</label><select data-ov="template" style="width:100%">
+              <option value="card">Karte – Bild und Text</option><option value="banner">Banner – Leiste über die Breite</option>
+              <option value="media">Nur Bild oder Video</option><option value="text">Nur Text</option>
+              <option value="pack">Alert im Stil des Packs</option></select><span class="hint" id="ov-tpl-hint"></span></div>
+            <div class="field" data-for="title"><label>Titel</label><input type="text" data-ov="title" maxlength="160"></div>
+            <div class="field" data-for="line"><label>Zeile darunter</label><input type="text" data-ov="line" maxlength="240">
+              <span class="hint">Platzhalter: {name} {belohnung} {eingabe} {kosten}, bei Alerts auch {anzahl} {monate} {stufe}</span></div>
+            <div class="field" data-for="media"><label>Bild oder Video</label>
+              <div class="row"><select data-ov="media" style="flex:1"></select><label class="btn btn-sm">Hochladen<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.webm,.mp4,image/*,video/webm,video/mp4" id="ov-upload" hidden></label></div>
+              <span class="hint">PNG, JPG, GIF, WEBP, WEBM oder MP4 bis 15 MB. Videos laufen in Schleife, mit Ton, wenn kein Sound gewählt ist.</span></div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))" data-for="pos">
+              <div class="field"><label>Position</label><div class="posgrid" id="ov-pos"></div></div>
+              <div class="stack" style="gap:12px">
+                <div class="field"><label>Abstand zum Rand (px)</label><input type="number" min="0" max="600" data-ov="margin"></div>
+                <div class="field"><label>Größe</label><select data-ov="size" style="width:100%"><option value="s">Klein</option><option value="m">Mittel</option><option value="l">Groß</option><option value="custom">Eigene</option></select></div>
+                <div class="field hidden" id="ov-width-f"><label id="ov-width-l">Breite (px)</label><input type="number" min="16" max="1920" data-ov="width"></div>
+              </div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field" data-for="color"><label>Farbe</label><div class="row"><label class="check"><input type="checkbox" id="ov-packcolor">vom Pack</label><input type="color" id="ov-color" value="#b303f8" style="width:52px;height:40px;border:0;background:none;padding:0"></div></div>
+              <div class="field" data-for="bg"><label>Hintergrund</label><select data-ov="bg" style="width:100%"><option value="glass">Durchscheinend</option><option value="solid">Deckend</option><option value="none">Ohne</option></select></div>
+              <div class="field" data-for="anim"><label>Animation</label><select data-ov="anim" style="width:100%"><option value="slide">Hereinschieben</option><option value="fade">Einblenden</option><option value="pop">Aufploppen</option></select></div>
+              <div class="field"><label>Dauer (s)</label><input type="number" min="1" max="120" data-ov="secs"></div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field"><label>Sound</label><select data-ov="sound" style="width:100%"></select><span class="hint">Sounds lädst du unter „Alerts“ hoch.</span></div>
+              <div class="field"><label>Lautstärke <span class="muted" id="ov-vol-v"></span></label><input type="range" min="0" max="100" data-ov="volume"></div>
+            </div>
+            <div class="row"><button class="btn btn-primary" id="ov-save">Speichern</button><button class="btn" id="ov-test">In OBS testen</button>
+              <button class="btn" id="ov-close">Schließen</button><button class="btn btn-danger" id="ov-del">Löschen</button></div>
+          </div>
+          <div class="ov-side">
+            <div class="label" style="margin-bottom:8px">Vorschau</div>
+            <div class="ov-preview" id="ov-preview"><div class="ov-stage" id="ov-stage"></div></div>
+            <div class="row" style="margin-top:10px"><button class="btn btn-sm" id="ov-play">Animation abspielen</button>
+              <span class="small muted" id="ov-note">Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card stack">
+        <div><h2>Bilder und Videos</h2><p class="lead" style="margin:0">Hochgeladene Dateien für Einblendungen.</p></div>
+        <div id="ov-media"></div>
       </div>
     </div>
   </section>
@@ -412,7 +530,10 @@ document.addEventListener('click',async ev=>{
   if(b){
     if(b.dataset.confirm&&!confirm(b.dataset.confirm))return;
     b.disabled=true;
-    try{const r=await api('/api/control',{action:b.dataset.act,id:b.dataset.id});S=r.state;render();if(r.message)toast(r.message)}
+    const body={action:b.dataset.act,id:b.dataset.id};
+    if(b.dataset.min)body.minutes=parseFloat($(b.dataset.min).value||'0');
+    if(b.dataset.on!=null)body.on=b.dataset.on==='1';
+    try{const r=await api('/api/control',body);S=r.state;render();if(r.message)toast(r.message)}
     catch(e){toast(e.message)}
     finally{b.disabled=false}
     return;
@@ -476,7 +597,220 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
+  renderObs();renderAlerts();renderOverlays();
 }
+
+/* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
+const hms=s=>{s=Math.max(0,s|0);const h=s/3600|0,m=(s%3600)/60|0;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')};
+function setBtn(b,act,label,primary,confirmText){b.dataset.act=act;b.textContent=label;b.classList.toggle('btn-primary',!!primary);
+  if(confirmText)b.dataset.confirm=confirmText;else delete b.dataset.confirm}
+function renderObs(){
+  const o=S.obs||{},st=o.stats||{};
+  $('#stream-chip').textContent=o.streaming?`Live · ${hms(Date.now()/1000-(o.since||Date.now()/1000))}`:(o.recording?'Aufnahme läuft':'Offline');
+  $('#stream-chip').className='chip chip-sm '+(o.streaming?'chip-live chip-ok':o.recording?'chip-warn':'');
+  const pct=(a,b)=>b?` (${(a/b*100).toFixed(1).replace('.',',')} %)`:'';
+  const rows=[];
+  if(o.streaming){rows.push(['Bitrate',st.kbps!=null?num(st.kbps)+' kbit/s':'–']);rows.push(['Verlorene Frames (Netz)',num(st.dropped||0)+pct(st.dropped||0,st.frames)])}
+  rows.push(['FPS',st.fps?String(st.fps).replace('.',','):'–']);
+  rows.push(['Verzögert (Rendern)',num(st.lagged||0)+pct(st.lagged||0,st.rendered)]);
+  rows.push(['Übersprungen (Encoder)',num(st.skipped||0)+pct(st.skipped||0,st.encoded)]);
+  $('#stream-stats').innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  setBtn($('#stream-btn'),o.streaming?'stream_stop':'stream_start',o.streaming?'Stream beenden':'Stream starten',!o.streaming,o.streaming?'Stream wirklich beenden?':'Stream jetzt starten?');
+  setBtn($('#rec-btn'),o.recording?'rec_stop':'rec_start',o.recording?'Aufnahme stoppen':'Aufnahme starten',false,o.recording?'Aufnahme stoppen?':null);
+  const sc=(o.scenes||[]).map(n=>`<button class="btn btn-sm ${n===o.current?'btn-primary':''}" data-act="scene" data-id="${esc(n)}">${esc(n)}</button>`).join('');
+  if($('#scene-buttons').innerHTML!==sc)$('#scene-buttons').innerHTML=sc||'<span class="muted small">Keine Szenen gefunden.</span>';
+  const au=(o.audio||[]).map(a=>`<button class="btn btn-sm ${a.muted?'btn-danger':''}" data-act="mute" data-id="${esc(a.name)}" data-on="${a.muted?0:1}">${a.muted?'Stumm: ':''}${esc(a.name)}</button>`).join('');
+  if($('#audio-buttons').innerHTML!==au)$('#audio-buttons').innerHTML=au||'<span class="muted small">Keine Audioquellen.</span>';
+  const left=k=>{const t=(o.timers||{})[k];return t>Date.now()?'noch '+hms((t-Date.now())/1000):''};
+  $('#timer-start-left').textContent=left('start');$('#timer-pause-left').textContent=left('pause');
+  $('#irl-cams').innerHTML=(o.cams||[]).map(c=>`<span class="chip chip-sm ${c.live?'chip-ok':'chip-danger'}">${esc(c.name)}: ${c.live?'Signal':'kein Signal'}</span>`).join('');
+}
+
+/* ---------- Alerts je Art ---------- */
+const ATYPES=[['follow','Follow'],['sub','Abo'],['resub','Abo verlängert'],['gift','Geschenk-Abos'],['cheer','Bits'],['raid','Raid'],['redeem','Kanalpunkte']];
+const MINLBL={cheer:'Erst ab … Bits',gift:'Erst ab … verschenkten Abos',raid:'Erst ab … Leuten'};
+let alertsBuilt=false;
+function soundOf(slot){return (S.sounds||[]).find(x=>x.slot===slot)}
+function buildAlerts(){
+  const box=$('#alert-cards');box.innerHTML='';
+  ATYPES.forEach(([t,l])=>{
+    const c=el('div','card stack');c.dataset.type=t;
+    c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
+      <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
+      ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Darstellung</label><select data-a="overlay" style="width:100%"></select></div>
+      <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
+      <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
+      <div class="row"><span class="small muted" data-snd></span></div>
+      <div class="row"><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="${t}" hidden></label>
+        <button class="btn btn-sm btn-danger hidden" data-del>Sound entfernen</button>
+        <button class="btn btn-sm" data-act="test_${t}">Testen</button></div>`;
+    const send=debounce(()=>{const a={};c.querySelectorAll('[data-a]').forEach(i=>a[i.dataset.a]=i.type==='checkbox'?i.checked:(i.type==='range'||i.type==='number')?parseInt(i.value||'0',10):i.value);
+      api('/api/settings',{alerts:{[t]:a}}).then(r=>{S=r.state}).catch(e=>toast('Nicht gespeichert: '+e.message))},600);
+    c.querySelectorAll('[data-a]').forEach(i=>{i.addEventListener(i.type==='checkbox'?'change':'input',send);
+      if(i.type==='range')i.addEventListener('input',()=>c.querySelector('[data-v]').textContent=i.value+' %')});
+    box.append(c);
+  });
+  alertsBuilt=true;
+}
+function renderAlerts(){
+  if(!alertsBuilt)buildAlerts();
+  ATYPES.forEach(([t])=>{
+    const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    const os=c.querySelector('[data-a=overlay]'),oo=ovOptions('Standard-Alert des Packs');
+    if(os.dataset.o!==oo){os.dataset.o=oo;os.innerHTML=oo}
+    c.querySelectorAll('[data-a=kind],[data-a=detail]').forEach(i=>i.closest('.field').classList.toggle('hidden',!!a.overlay&&(S.overlays||[]).some(o=>o.id===a.overlay)));
+    c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
+    c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
+    const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
+    c.querySelector('[data-snd]').textContent=snd?`Sound: ${snd.file}`:def?`Sound: ${def.file} (für alle)`:'Sound: eingebauter Klang';
+    const del=c.querySelector('[data-del]');del.classList.toggle('hidden',!snd);del.dataset.file=snd?snd.file:'';
+  });
+  const extra=(S.sounds||[]).filter(x=>!x.slot);
+  const ex=extra.map(x=>`<div class="row"><span>${esc(x.file)}</span><button class="btn btn-sm" data-play="${esc(x.url)}">Anhören</button><button class="btn btn-sm btn-danger" data-act="sound_delete" data-id="${esc(x.file)}" data-confirm="${esc(x.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#extra-sounds').innerHTML!==ex)$('#extra-sounds').innerHTML=ex;
+  $('#reward-titles').innerHTML=(S.reward_titles||[]).map(t=>`<option value="${esc(t)}">`).join('');
+  if(!rulesDirty)renderRules();
+}
+document.addEventListener('click',ev=>{
+  const d=ev.target.closest('[data-del]');
+  if(d&&d.dataset.file&&confirm('Eigenen Sound entfernen?'))api('/api/control',{action:'sound_delete',id:d.dataset.file}).then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast(e.message));
+  const p=ev.target.closest('[data-play]');if(p)new Audio(p.dataset.play).play().catch(()=>toast('Abspielen nicht möglich'));
+});
+document.addEventListener('change',ev=>{
+  const i=ev.target.closest('[data-upload]');if(!i||!i.files[0])return;
+  const file=i.files[0];if(file.size>5*1024*1024){toast('Größer als 5 MB');return}
+  const rd=new FileReader();rd.onload=()=>api('/api/sound',{slot:i.dataset.upload,filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file);i.value='';
+});
+
+/* ---------- Kanalpunkte-Regeln (Entwurf bis „Regeln speichern“) ---------- */
+let rules=null,rulesDirty=false;
+function ruleRow(r,i){
+  const opt=(list,val,none)=>`<option value="">${none}</option>`+list.map(x=>`<option value="${esc(x)}" ${x===val?'selected':''}>${esc(x)}</option>`).join('');
+  const sounds=(S.sounds||[]).map(x=>x.file),scenes=(S.obs&&S.obs.scenes)||[];
+  return `<div class="alert stack" style="gap:10px" data-rule="${i}">
+    <div class="form-grid">
+      <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Einblendung</label><select data-r="overlay">${ovOptions('keine',r.overlay)}</select></div>
+      <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
+      <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
+      <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
+    </div>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Standard-Alert des Packs zeigen</label>
+      <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
+}
+function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
+function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.querySelectorAll('[data-r]').forEach(i=>r[i.dataset.r]=i.type==='checkbox'?i.checked:i.type==='number'?parseInt(i.value||'0',10):i.value);return r})}
+$('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
+$('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
+$('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();render();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+
+/* ---------- Einblendungen: Liste, Editor (Entwurf bis „Speichern“), Vorschau ---------- */
+const OV_TPL={card:'Karte',banner:'Banner',media:'Bild/Video',text:'Text',pack:'Alert des Packs'};
+const OV_HINT={card:'Bild oben, darunter Titel und Zeile.',banner:'Leiste über die ganze Breite – oben, mittig oder unten.',
+  media:'Nur das Bild oder Video, ohne Text.',text:'Großer Text in der Farbe, auf Wunsch ohne Hintergrund.',
+  pack:'Der Alert des Packs mit deinen Texten, deinem Sound und deiner Dauer. Position und Aussehen bestimmt das Pack.'};
+const OV_SAMPLE={name:'Sternenstaub',belohnung:'Trink was!',eingabe:'Ein Hoch auf den Chat!',kosten:'500',anzahl:'5',monate:'14',stufe:'1'};
+const ovFill=t=>String(t||'').replace(/\{(\w+)\}/g,(m,k)=>k in OV_SAMPLE?OV_SAMPLE[k]:m);
+let ovDraft=null,ovDirty=false;
+function ovOptions(none,val){return `<option value="">${esc(none)}</option>`+(S.overlays||[]).map(o=>`<option value="${esc(o.id)}" ${o.id===val?'selected':''}>${esc(o.name)}</option>`).join('')}
+['tl','tc','tr','ml','mc','mr','bl','bc','br'].forEach(p=>{const b=el('button');b.type='button';b.dataset.pos=p;b.title={t:'oben',m:'Mitte',b:'unten'}[p[0]]+' '+{l:'links',c:'mittig',r:'rechts'}[p[1]];$('#ov-pos').append(b)});
+function ovUsed(id){const r=(S.rewards||[]).filter(x=>x.overlay===id).map(x=>'„'+x.reward+'“'),a=ATYPES.filter(([t])=>((S.alerts||{})[t]||{}).overlay===id).map(([,l])=>l);
+  return [...a,...r].join(', ')}
+function renderOverlays(){
+  const list=(S.overlays||[]).map(o=>`<div class="ov-item"><div style="min-width:0"><strong>${esc(o.name)}</strong> <span class="chip chip-sm">${OV_TPL[o.template]||o.template}</span>
+    <div class="small muted">${ovUsed(o.id)?'Für: '+esc(ovUsed(o.id)):'Noch nicht verknüpft – unter „Alerts“ einer Art oder Kanalpunkt-Regel zuordnen.'}</div></div>
+    <div class="row"><button class="btn btn-sm" data-ov-edit="${esc(o.id)}">Bearbeiten</button><button class="btn btn-sm" data-act="overlay_test" data-id="${esc(o.id)}">In OBS testen</button></div></div>`).join('')
+    ||'<span class="muted small">Noch keine Einblendung. „Neue Einblendung“ legt eine an.</span>';
+  if($('#ov-list').innerHTML!==list)$('#ov-list').innerHTML=list;
+  const md=(S.media||[]).map(m=>`<div class="ov-item"><div class="row" style="min-width:0">${m.video?`<video class="thumb" src="/media/${encodeURIComponent(m.file)}" muted></video>`:`<img class="thumb" src="/media/${encodeURIComponent(m.file)}" alt="">`}<span>${esc(m.file)}</span></div>
+    <button class="btn btn-sm btn-danger" data-act="media_delete" data-id="${esc(m.file)}" data-confirm="${esc(m.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#ov-media').innerHTML!==md)$('#ov-media').innerHTML=md;
+  if(ovDraft)ovOptionsForm();
+}
+function ovOptionsForm(){
+  const ms=$('#ov-form [data-ov=media]'),ss=$('#ov-form [data-ov=sound]');
+  const mo='<option value="">kein Bild</option>'+(S.media||[]).map(m=>`<option value="${esc(m.file)}">${esc(m.file)}</option>`).join('');
+  const so='<option value="">kein Sound</option>'+(S.sounds||[]).map(x=>`<option value="${esc(x.file)}">${esc(x.file)}</option>`).join('');
+  if(ms.dataset.o!==mo){ms.dataset.o=mo;ms.innerHTML=mo;ms.value=ovDraft.media||''}
+  if(ss.dataset.o!==so){ss.dataset.o=so;ss.innerHTML=so;ss.value=ovDraft.sound||''}
+}
+function ovOpen(o){
+  ovDraft=JSON.parse(JSON.stringify(o));ovDirty=false;
+  $('#ov-editor').classList.remove('hidden');$('#ov-head').textContent=o.id?'Einblendung bearbeiten':'Neue Einblendung';
+  $('#ov-del').classList.toggle('hidden',!o.id);
+  ovOptionsForm();
+  $$('#ov-form [data-ov]').forEach(i=>i.value=ovDraft[i.dataset.ov]??'');
+  $('#ov-packcolor').checked=!ovDraft.color;$('#ov-color').value=ovDraft.color||'#b303f8';
+  ovSync();$('#ov-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function ovRead(){
+  $$('#ov-form [data-ov]').forEach(i=>ovDraft[i.dataset.ov]=i.type==='number'||i.type==='range'?parseInt(i.value||'0',10):i.value);
+  ovDraft.color=$('#ov-packcolor').checked?'':$('#ov-color').value;
+}
+function ovSync(){
+  const d=ovDraft,pack=d.template==='pack';
+  $('#ov-tpl-hint').textContent=OV_HINT[d.template]||'';
+  $$('#ov-form [data-for]').forEach(f=>{const k=f.dataset.for;
+    f.classList.toggle('hidden',pack&&k!=='title'&&k!=='line'||(d.template==='media'&&(k==='title'||k==='line'))||(d.template==='text'&&k==='media'))});
+  $('#ov-width-f').classList.toggle('hidden',d.size!=='custom');
+  $('#ov-width-l').textContent=d.template==='banner'?'Höhe (px)':d.template==='text'?'Schriftgröße (px)':'Breite (px)';
+  $('#ov-color').disabled=$('#ov-packcolor').checked;
+  $('#ov-vol-v').textContent=(d.volume??100)+' %';
+  $$('#ov-pos button').forEach(b=>{b.classList.toggle('on',b.dataset.pos===d.pos);b.disabled=d.template==='banner'&&b.dataset.pos[1]!=='c'});
+  $('#ov-note').textContent=pack?'Angedeutet – in OBS erscheint der Alert des Packs.':'Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.';
+  ovPreview(false);
+}
+function ovView(){
+  const d=ovDraft,m=(S.media||[]).find(x=>x.file===d.media);
+  const o=Object.assign({},d,{title:ovFill(d.title),line:ovFill(d.line),media:m?'/media/'+encodeURIComponent(m.file):'',video:!!(m&&m.video),
+    sound:d.sound?'/sounds/'+encodeURIComponent(d.sound):''});
+  if(d.template==='pack')Object.assign(o,{template:'card',media:'',bg:'solid',pos:'mc',size:'m',anim:'pop',color:''});
+  return o;
+}
+function ovScale(){const p=$('#ov-preview');$('#ov-stage').style.transform=`scale(${p.clientWidth/1920})`}
+new ResizeObserver(ovScale).observe($('#ov-preview'));
+function ovPreview(play){
+  const st=$('#ov-stage');st.innerHTML='';if(!ovDraft)return;ovScale();
+  const o=ovView();
+  if(play){ovlPlay(o,st,{volume:((S.live&&S.live.volume)??70)/100});return}
+  const n=ovlNode(Object.assign({},o,{mute:true}));n.box.style.transition='none';n.box.classList.add('o-in');st.append(n.wrap);
+}
+$('#ov-form').addEventListener('input',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-form').addEventListener('change',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-pos').addEventListener('click',ev=>{const b=ev.target.closest('[data-pos]');if(!b||!ovDraft)return;ovDraft.pos=b.dataset.pos;ovDirty=true;ovSync()});
+$('#ov-new').onclick=()=>ovOpen({id:'',name:'Neue Einblendung',template:'card',pos:'tc',margin:48,size:'m',width:480,title:'{name}',line:'{belohnung}',
+  media:'',color:'',bg:'glass',anim:'slide',secs:6,sound:'',volume:100});
+$('#ov-list').addEventListener('click',ev=>{const b=ev.target.closest('[data-ov-edit]');if(!b)return;
+  if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;
+  const o=(S.overlays||[]).find(x=>x.id===b.dataset.ovEdit);if(o)ovOpen(o)});
+$('#ov-play').onclick=()=>ovPreview(true);
+$('#ov-close').onclick=()=>{if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden')};
+async function ovSave(){
+  ovRead();if(!ovDraft.id)ovDraft.id='o'+Math.random().toString(16).slice(2,8);
+  const list=(S.overlays||[]).filter(o=>o.id!==ovDraft.id);const i=(S.overlays||[]).findIndex(o=>o.id===ovDraft.id);
+  list.splice(i<0?list.length:i,0,ovDraft);
+  const r=await api('/api/settings',{overlays:list});S=r.state;ovDirty=false;$('#ov-head').textContent='Einblendung bearbeiten';$('#ov-del').classList.remove('hidden');render();
+}
+$('#ov-save').onclick=()=>ovSave().then(()=>toast('Einblendung gespeichert')).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#ov-test').onclick=async()=>{try{if(ovDirty||!ovDraft.id)await ovSave();const r=await api('/api/control',{action:'overlay_test',id:ovDraft.id});S=r.state;toast('An die Szenen geschickt')}catch(e){toast(e.message)}};
+$('#ov-del').onclick=async()=>{if(!ovDraft||!confirm(`„${ovDraft.name}“ löschen? Verknüpfte Alerts zeigen dann wieder den Standard-Alert.`))return;
+  try{const r=await api('/api/settings',{overlays:(S.overlays||[]).filter(o=>o.id!==ovDraft.id)});S=r.state;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden');render();toast('Gelöscht')}
+  catch(e){toast(e.message)}};
+$('#ov-upload').onchange=()=>{const i=$('#ov-upload'),file=i.files[0];if(!file)return;i.value='';
+  if(file.size>15*1024*1024){toast('Größer als 15 MB');return}
+  toast('Wird hochgeladen …');
+  const rd=new FileReader();rd.onload=()=>api('/api/media',{filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;if(ovDraft){ovOptionsForm();ovDraft.media=r.file;$('#ov-form [data-ov=media]').value=r.file;ovDirty=true;ovSync()}render();toast(r.message)})
+    .catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file)};
+
+/*@OVERLAY@*/
 
 async function poll(){
   if(!KEY){showNoKey();return}

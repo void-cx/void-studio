@@ -5,6 +5,8 @@ import os, sys
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'studio')
 START, END = 'WEB_HTML = r"""', '"""  # Ende WEB_HTML'
 html = open(os.path.join(ROOT, 'web.html'), encoding='utf-8').read()
+# Einblendungen: derselbe Baustein wie in den Packs, für die Vorschau im Editor
+html = html.replace('/*@OVERLAY@*/', open(os.path.join(ROOT, '..', 'build', 'core', 'overlay.js'), encoding='utf-8').read())
 assert '"""' not in html and not html.endswith('\\'), 'web.html darf keine """ enthalten'
 py_path = os.path.join(ROOT, 'void-studio.py')
 py = open(py_path, encoding='utf-8').read()

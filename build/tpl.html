@@ -41,6 +41,7 @@
 @font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
 
 :root{
+  --ovl-font:"VOID Latin"; --ovl-acc:var(--sky);   /* Einblendungen aus VOID Studio */
   --night:#06081A;      /* Grund – nah am Void-Schwarz */
   --deep:#0C1030;
   --aether:#BFE6FF;     /* Runenlicht */
@@ -514,11 +515,16 @@ function fullscreen(cfg){
     setInterval(()=>T.replay(1600),40000);      /* Titel alle 40 s neu entschlüsseln */
   });
 
-  const min=parseFloat(P.get('min'));
-  if(SCENE==='start'&&min>0){
-    const end=Date.now()+min*60000;
+  const min=parseFloat(P.get('min')),until=parseFloat(P.get('until')),back=parseFloat(P.get('back'));
+  if(SCENE==='start'&&(until>0||min>0)){
+    const end=until>0?until:Date.now()+min*60000;
     const tick=()=>{const s=Math.max(0,Math.round((end-Date.now())/1000));
       ct.innerHTML=s>0?`Live in <b>${String(s/60|0).padStart(2,'0')}:${String(s%60).padStart(2,'0')}</b>`:'<b>Gleich live</b>'};
+    tick();setInterval(tick,250);
+  }
+  if(SCENE==='pause'&&back>0){                    /* Pausen-Timer aus VOID Studio */
+    const tick=()=>{const s=Math.max(0,Math.round((back-Date.now())/1000));
+      ct.innerHTML=s>0?`Zurück in <b>${String(s/60|0).padStart(2,'0')}:${String(s%60).padStart(2,'0')}</b>`:'<b>Gleich zurück</b>'};
     tick();setInterval(tick,250);
   }
 }
@@ -615,7 +621,7 @@ function chime(type,vol){
   }catch(_){}
 }
 function playSound(type){
-  const v=(STATE.volume??70)/100;if(v<=0)return;
+  const v=(STATE.volume??70)/100*((STATE.alert_volumes||{})[type]??100)/100;if(v<=0)return;
   const src=STATE.sounds&&(STATE.sounds[type]||STATE.sounds.default);
   if(src){const a=new Audio(src);a.volume=v;a.play().catch(()=>chime(type,v))}else chime(type,v);
 }
@@ -630,7 +636,7 @@ async function nextAlert(){
   await showAlert(AQ.shift());await wait(500);nextAlert();
 }
 async function showAlert(e){
-  const [kind,detail]=FMT[e.type](e);
+  const f0=FMT[e.type](e),kind=(e.texts&&e.texts[0])||f0[0],detail=(e.texts&&e.texts[1])||f0[1];   /* eigene Texte aus VOID Studio */
   const a=el('div','alert');const b=el('div','body');
   const k=el('div','a-kind');k.textContent=kind;
   const n=el('div','a-name');const d=el('div','a-detail');d.textContent=detail;
@@ -640,9 +646,9 @@ async function showAlert(e){
     const mk=makeMark({d:200,t:520});mk.style.cssText='width:58px;margin:0 auto 12px';b.prepend(mk)}
   a.appendChild(b);alertBox.appendChild(a);
   const C=new Cipher(n,{stagger:55,shuffle:520});C.build((e.user||'Anonym').slice(0,25));
-  await wait(40);a.classList.add('in');playSound(e.type);await wait(450);
+  await wait(40);a.classList.add('in');e.sound?playUrl(e.sound):playSound(e.type);await wait(450);
   await C.reveal();a.classList.add('done');
-  await hold(e.text?8000:5500);skipNow=null;
+  await hold(e.hold||(e.text?8000:5500));skipNow=null;
   await C.conceal();a.classList.remove('in');await wait(750);a.remove();
 }
 
@@ -735,8 +741,14 @@ function chatRemove(sel){if(chatLog)chatLog.querySelectorAll(sel).forEach(n=>n.c
    laufenden Alert). Leerer Text = Parameter bzw. Standard. Mehrere Zeilen werden zu A|B|C. */
 const INFO_KEYS={'Titel':'title','Statuszeilen':'sub','Charakter':'char','Spiel':'game','Entwickler':'dev','Status':'status',
   'Wunschliste':'wish','Spiele des Abends':'games','Strecke':'track','Auto':'car','Serie':'series','Ort':'place','Wetter-Ort':'wx',
-  'Splash':'splash','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
+  'Splash':'splash','_start':'until','_pause':'back','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
 const PACK_ID=((location.pathname.match(/\/packs\/([^\/]+)\/[^\/]*$/)||[])[1]||'').replace(/^void-theme-/,'');
+/* Sound ohne Alert (Kanalpunkte-Aktion aus VOID Studio) */
+function playUrl(url){const v=(STATE.volume??70)/100;if(v<=0||!url)return;const a=new Audio(url);a.volume=v;a.play().catch(()=>{})}
+/* Countdown (Start) und Pausen-Timer aus VOID Studio: als Parameter until/back, nur in der passenden Szene */
+function withTimers(d,t){d=Object.assign({},d);t=t||{};
+  if(SCENE==='start'&&t.start>Date.now())d._start=String(t.start);
+  if(SCENE==='pause'&&t.pause>Date.now())d._pause=String(t.pause);return d}
 function applyInfo(d){
   const want={};
   Object.entries(d||{}).forEach(([label,raw])=>{const k=INFO_KEYS[label];if(!k)return;
@@ -754,6 +766,8 @@ function applyInfo(d){
   go();
 }
 
+/*@OVERLAY@*/
+
 /* ---------- Verbindung zur Bridge ---------- */
 function onMessage(e){
   switch(e.type){
@@ -764,7 +778,9 @@ function onMessage(e){
     case 'chat_delete_user':chatRemove(`[data-uid="${CSS.escape(e.uid||'')}"]`);break;
     case 'chat_clear':if(chatLog)chatLog.innerHTML='';break;
     case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
-    case 'infos':if(PACK_ID&&e.packs)applyInfo(e.packs[PACK_ID]||{});break;
+    case 'infos':if(PACK_ID&&e.packs)applyInfo(withTimers(e.packs[PACK_ID]||{},e.timers));break;
+    case 'sound':playUrl(e.url);break;
+    case 'overlay':if(e.o)ovlHost(e.o);break;
     default:pushAlert(e);
   }
 }

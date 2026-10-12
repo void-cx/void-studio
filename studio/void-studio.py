@@ -27,13 +27,14 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.1.1"
+STUDIO_VERSION = "1.1.2"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~/.config"), "VOID-Bridge")
 TOKEN_FILE = os.path.join(DATA_DIR, "void-twitch-token.json")
 STATE_FILE = os.path.join(DATA_DIR, "void-bridge-state.json")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")   # Einstellungen für alle Szenensammlungen gemeinsam
 SOUND_DIR = os.path.join(DATA_DIR, "sounds")
 PACKS_DIR = os.path.join(DATA_DIR, "packs")
 STUDIO_PATH = os.path.join(DATA_DIR, "void-studio.py")
@@ -43,14 +44,17 @@ SCOPES = ("moderator:read:followers channel:read:subscriptions bits:read "
           "channel:read:redemptions user:read:chat")
 EVENTSUB_URL = "wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds=30"
 SOUND_EXT = {".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav"}
+MEDIA_DIR = os.path.join(DATA_DIR, "media")             # Bilder und Videos für Einblendungen
+MEDIA_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+             ".webm": "video/webm", ".mp4": "video/mp4"}
 CLIENT_ID = "r95fjm0m90hk3kslgnjn8y2b8ygx4n"   # öffentliche Twitch-App (Client-Typ Public)
 ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 
 LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
-       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
-       "remote_on": False}
+       "ignore": set(), "hide_cmd": True, "irl_auto": True, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
+       "remote_on": False, "alerts": {}, "rewards": [], "overlays": []}
 web = {"key": None, "log": collections.deque(maxlen=40), "device": None}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
@@ -120,6 +124,7 @@ def snapshot():
             if target > 0 and cur is not None:
                 goals.append({"key": key, "label": label, "cur": cur, "target": target})
         return {"type": "state", "paused": state["paused"], "volume": cfg["volume"], "sounds": sound_map(),
+                "alert_volumes": {t: alert_cfg(t)["volume"] for t in ALERT_TYPES},
                 "show_latest": cfg["show_latest"], "latest_items": cfg["latest_items"],
                 "counts": {"followers": state["followers"], "subs": state["subs"]},
                 "latest": state["latest"], "session": state["session"], "goals": goals}
@@ -171,9 +176,45 @@ def record(ev):
     push_state()
 
 
-def alert(ev, count=True):
-    send_all(ev)
-    log(f"Alert: {ev['type']} – {ev.get('user')}" + ("" if count else " (Test/Wiederholung)"))
+ALERT_DEFAULT = {"on": True, "volume": 100, "min": 0, "kind": "", "detail": "", "overlay": ""}   # overlay: statt Standard-Alert
+MIN_ALERTS = ("cheer", "gift", "raid")                 # Mindestwert gilt für Bits, Geschenk-Abos, Raid-Größe
+
+
+def alert_cfg(t):
+    return dict(ALERT_DEFAULT, **(cfg["alerts"].get(t) or {}))
+
+
+def fill(tpl, ev):
+    """Platzhalter {name} {anzahl} {monate} {stufe} {belohnung} {eingabe} {kosten}; kaputte Vorlagen bleiben wie sie sind."""
+    vals = collections.defaultdict(str, name=ev.get("user", ""), anzahl=ev.get("amount", "") or "",
+                                   monate=ev.get("months", "") or "", stufe=ev.get("tier", "") or "",
+                                   belohnung=ev.get("title", "") or "", eingabe=ev.get("text", "") or "",
+                                   kosten=ev.get("cost", "") or "")
+    try:
+        return tpl.format_map(vals) if tpl else ""
+    except (ValueError, IndexError, AttributeError):
+        return tpl
+
+
+def alert_texts(ev, ac):
+    """Eigene Überschrift/Zeile; leer = Standard des Packs."""
+    kind, detail = fill(ac["kind"], ev), fill(ac["detail"], ev)
+    return [kind, detail] if kind or detail else None
+
+
+def alert(ev, count=True, test=False):
+    """count: echtes Ereignis (Rückblick, Ziele). test: Vorschau – zeigt den Alert unabhängig von An/Aus und Mindestwert."""
+    t = ev.get("type")
+    ac = alert_cfg(t)
+    rule = reward_rule(ev) if t == "redeem" and count else None
+    show = test or (ac["on"] and not (t in MIN_ALERTS and (ev.get("amount") or 0) < ac["min"])
+                    and not (rule and not rule.get("alert", True)))
+    if show and not show_overlay(ac["overlay"], ev):
+        texts = alert_texts(ev, ac)
+        send_all(dict(ev, texts=texts) if texts else ev)
+    log(f"Alert: {t} – {ev.get('user')}" + ("" if count else " (Test/Wiederholung)") + ("" if show else " – ausgeblendet"))
+    if rule:
+        run_reward(rule, ev)
     if count:
         with lock:
             state["last_alert"] = ev
@@ -501,6 +542,11 @@ def web_state():
                          latest_items=cfg["latest_items"], ignore=", ".join(sorted(cfg["ignore"]))),
         "local_url": local, "remote_urls": remote, "port": cfg["port"],
         "portal": PORTAL_STUDIO,
+        "obs": dict(obs_state, timers=dict(timers), now=int(time.time() * 1000)),
+        "alerts": {t: alert_cfg(t) for t in ALERT_TYPES},
+        "sounds": sound_files(),
+        "rewards": cfg["rewards"], "reward_titles": web["rewards"],
+        "overlays": cfg["overlays"], "media": media_files(),
         "listeners": len(clients),
     }
 
@@ -526,33 +572,84 @@ def web_infos(body):
 
 
 def web_settings(body):
-    st = settings_ref[0]
-    if st is None:
-        raise RuntimeError("Einstellungen noch nicht geladen")
+    """Änderungen aus der Oberfläche: zentral speichern, gelten sofort in allen Szenen und Sammlungen."""
+    vals = {}
     for k, v in body.items():
         if k in BOOL_SETTINGS:
-            obs.obs_data_set_bool(st, k, bool(v))
+            vals[k] = bool(v)
         elif k in INT_SETTINGS:
             lo, hi = INT_SETTINGS[k]
-            obs.obs_data_set_int(st, k, max(lo, min(hi, int(v))))
+            vals[k] = max(lo, min(hi, int(v)))
         elif k in STR_SETTINGS:
-            obs.obs_data_set_string(st, k, str(v)[:300])
+            vals[k] = str(v)[:300].strip() or cfg[k]
         elif k == "ignore":
-            obs.obs_data_set_string(st, "ignore", str(v)[:2000])
+            vals[k] = sorted({n.strip().lower() for n in str(v)[:2000].split(",") if n.strip()})
         elif k == "latest_items":
-            for key in LATEST_KEYS:
-                obs.obs_data_set_bool(st, "latest_" + key, key in (v or []))
-    script_update(st, defer_restart=True)
+            vals[k] = [x for x in LATEST_KEYS if x in (v or [])]
+        elif k == "alerts" and isinstance(v, dict):
+            alerts = dict(cfg["alerts"])
+            for t, a in v.items():
+                if t in ALERT_TYPES and isinstance(a, dict):
+                    cur = alert_cfg(t)
+                    cur.update(on=bool(a.get("on", cur["on"])), volume=max(0, min(100, int(a.get("volume", cur["volume"])))),
+                               min=max(0, min(10000000, int(a.get("min", cur["min"])))),
+                               kind=str(a.get("kind", cur["kind"]))[:120], detail=str(a.get("detail", cur["detail"]))[:160],
+                               overlay=str(a.get("overlay", cur["overlay"]) or "")[:12])
+                    alerts[t] = cur
+            vals[k] = alerts
+        elif k == "rewards" and isinstance(v, list):
+            clean = []
+            for r in v[:50]:
+                if isinstance(r, dict) and str(r.get("reward", "")).strip():
+                    clean.append({"reward": str(r["reward"]).strip()[:80], "alert": bool(r.get("alert", True)),
+                                  "overlay": str(r.get("overlay") or "")[:12],
+                                  "sound": os.path.basename(str(r.get("sound") or ""))[:80],
+                                  "scene": str(r.get("scene") or "")[:120], "scene_secs": max(0, min(3600, int(r.get("scene_secs") or 0))),
+                                  "source": str(r.get("source") or "")[:120], "source_secs": max(0, min(3600, int(r.get("source_secs") or 0)))})
+            vals[k] = clean
+        elif k == "overlays" and isinstance(v, list):
+            clean, seen = [], set()
+            for o in v[:30]:
+                if isinstance(o, dict):
+                    o = overlay_clean(o)
+                    if o["id"] in seen:
+                        o["id"] = "o" + os.urandom(3).hex()
+                    seen.add(o["id"])
+                    clean.append(o)
+            vals[k] = clean
+    before = (cfg["port"], cfg["remote_on"])
+    apply_settings(vals)
+    save_global()
+    sync_window(settings_ref[0])
+    if (cfg["port"], cfg["remote_on"]) != before:
+        threading.Timer(0.5, start_server).start()      # erst antworten, dann neu binden
+    push_state()
 
 
-def web_control(action, pid=None, local=False):
+def web_control(action, pid=None, local=False, body=None):
     """Knöpfe der Oberfläche. Langsame Sachen (Downloads) laufen im Hintergrund, die Seite zeigt den Fortschritt."""
     simple = {"replay": ctl_replay, "pause": ctl_pause, "skip": ctl_skip, "reset_session": ctl_reset_session,
               "reset_bits": ctl_reset_bits, "test_chat": test_chat}
     if action in simple:
         simple[action]()
     elif action.startswith("test_") and action[5:] in SAMPLES:
-        alert(dict(SAMPLES[action[5:]]), count=False)
+        alert(dict(SAMPLES[action[5:]]), count=False, test=True)
+    elif action in OBS_ACTIONS:
+        return obs_action(action, pid, body)
+    elif action == "timer_start":
+        return timer_start(str(pid), (body or {}).get("minutes"))
+    elif action == "timer_stop":
+        return timer_stop(str(pid))
+    elif action == "sound_delete" and pid:
+        return sound_delete(str(pid))
+    elif action == "rewards_load":
+        return rewards_load()
+    elif action == "overlay_test":
+        if not show_overlay(str(pid or ""), dict(SAMPLES["redeem"], text="Ein Hoch auf den Chat!")):
+            raise ValueError("Einblendung erst speichern")
+        return None
+    elif action == "media_delete" and pid:
+        return media_delete(str(pid))
     elif action == "twitch_login":
         threading.Thread(target=device_login, args=(local,), daemon=True).start()
     elif action == "twitch_logout":
@@ -575,6 +672,381 @@ def web_control(action, pid=None, local=False):
     else:
         raise ValueError(f"unbekannte Aktion: {action}")
     return None
+
+
+# ---------------------------------------------------------------- Steuerung: OBS, Stream-Zustand, Timer, Sounds, Kanalpunkte
+# Regeln seit 1.0.4: Server-Threads lesen aus libobs, wechseln Szenen und starten Stream/Aufnahme nur über ctypes in
+# einem eigenen Thread (gibt die Python-Sperre ab). Die Szenenliste liest der Oberflächen-Thread (Frontend-Ereignis).
+OBS_ACTIONS = ("scene", "stream_start", "stream_stop", "rec_start", "rec_stop", "mute")
+obs_state = {"scenes": [], "current": None, "streaming": False, "recording": False, "since": None, "stats": {},
+             "audio": [], "cams": []}
+timers = {"start": 0, "pause": 0}                       # Ende als Unix-Zeit in ms, 0 = aus
+TIMER_FILE = os.path.join(DATA_DIR, "timers.json")
+web["rewards"] = []
+
+
+def frontend_call(name, *args):
+    """Frontend-Funktion über ctypes in einem eigenen Thread (die Oberfläche kann dabei Python-Ereignisse auslösen)."""
+    def run():
+        n = native()
+        if n:
+            try:
+                getattr(n[1], name)(*args)
+            except Exception as e:
+                log(f"OBS: {name} fehlgeschlagen ({e})")
+    threading.Thread(target=run, daemon=True).start()
+
+
+def set_muted(name, muted):
+    n = native()
+    if not n:
+        return False
+    import ctypes
+    lib = n[0]
+    lib.obs_source_set_muted.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+    src = lib.obs_get_source_by_name(name.encode("utf-8"))
+    if not src:
+        return False
+    try:
+        lib.obs_source_set_muted(src, bool(muted))
+        return True
+    finally:
+        lib.obs_source_release(src)
+
+
+def obs_action(action, arg, body):
+    if action == "scene":
+        if not source_exists(str(arg or "")):
+            raise ValueError("Szene nicht gefunden")
+        switch_later(str(arg), f"Szene gewechselt: {arg}")
+    elif action in ("stream_start", "stream_stop", "rec_start", "rec_stop"):
+        fn = {"stream_start": "obs_frontend_streaming_start", "stream_stop": "obs_frontend_streaming_stop",
+              "rec_start": "obs_frontend_recording_start", "rec_stop": "obs_frontend_recording_stop"}[action]
+        frontend_call(fn)
+        log({"stream_start": "Stream wird gestartet.", "stream_stop": "Stream wird beendet.",
+             "rec_start": "Aufnahme wird gestartet.", "rec_stop": "Aufnahme wird gestoppt."}[action])
+    elif action == "mute":
+        threading.Thread(target=set_muted, args=(str(arg or ""), bool((body or {}).get("on"))), daemon=True).start()
+    return None
+
+
+def refresh_scene_list():
+    """Im Oberflächen-Thread: Szenen in der Reihenfolge der OBS-Liste."""
+    lst = obs.obs_frontend_get_scenes() or []
+    try:
+        obs_state["scenes"] = [obs.obs_source_get_name(x) for x in lst]
+    finally:
+        if lst:
+            obs.source_list_release(lst)
+
+
+def on_frontend_event(event):
+    if event in (obs.OBS_FRONTEND_EVENT_FINISHED_LOADING, obs.OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED,
+                 obs.OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED):
+        try:
+            refresh_scene_list()
+        except Exception as e:
+            log(f"Szenenliste: {e}")
+
+
+def call(name, *args, default=None):
+    fn = getattr(obs, name, None)
+    try:
+        return fn(*args) if fn else default
+    except Exception:
+        return default
+
+
+def obs_stats_loop():
+    """Alle 2 s: Stream/Aufnahme, Bitrate, Frames, Audio, IRL-Kameras – nur lesend aus libobs."""
+    last = {"bytes": None, "t": None}
+    while not stop.is_set():
+        try:
+            streaming = bool(call("obs_frontend_streaming_active", default=False))
+            if streaming and not obs_state["streaming"]:
+                obs_state["since"] = int(time.time())
+            if not streaming:
+                obs_state["since"] = None
+            st = {}
+            out = call("obs_frontend_get_streaming_output")
+            if out:
+                try:
+                    b, now = call("obs_output_get_total_bytes", out, default=0), time.time()
+                    if streaming and last["bytes"] is not None and b >= last["bytes"] and now > last["t"]:
+                        st["kbps"] = int((b - last["bytes"]) * 8 / (now - last["t"]) / 1000)
+                    last.update(bytes=b, t=now)
+                    st["dropped"] = call("obs_output_get_frames_dropped", out, default=0)
+                    st["frames"] = call("obs_output_get_total_frames", out, default=0)
+                    st["congestion"] = round(float(call("obs_output_get_congestion", out, default=0.0) or 0), 2)
+                finally:
+                    obs.obs_output_release(out)
+            st["fps"] = round(float(call("obs_get_active_fps", default=0.0) or 0), 1)
+            st["lagged"], st["rendered"] = call("obs_get_lagged_frames", default=0), call("obs_get_total_frames", default=0)
+            vid = call("obs_get_video")
+            if vid:
+                st["skipped"] = call("video_output_get_skipped_frames", vid, default=0)
+                st["encoded"] = call("video_output_get_total_frames", vid, default=0)
+            audio, seen = [], set()
+            def look(src):
+                kind = obs.obs_source_get_unversioned_id(src)
+                if kind in ("browser_source", "scene", "group") or not (obs.obs_source_get_output_flags(src) & obs.OBS_SOURCE_AUDIO):
+                    return
+                name = obs.obs_source_get_name(src)
+                if name and name not in seen:
+                    seen.add(name)
+                    audio.append({"name": name, "muted": bool(obs.obs_source_muted(src))})
+            each_source(look)
+            if not obs_state["scenes"]:                  # bis das erste Frontend-Ereignis kommt: ungeordnet aus libobs
+                names = []
+                each_source(lambda x: names.append(obs.obs_source_get_name(x)) if obs.obs_source_get_unversioned_id(x) == "scene" else None)
+                obs_state["scenes"] = sorted(n for n in names if n)
+            cams = []
+            for i in range(1, 5):
+                live = source_live(f"Kamera {i}")
+                if live is not None:
+                    cams.append({"name": f"Kamera {i}", "live": live})
+            obs_state.update(streaming=streaming, recording=bool(call("obs_frontend_recording_active", default=False)),
+                             current=current_scene_name(), stats=st, audio=audio, cams=cams)
+        except Exception as e:
+            obs_state["error"] = str(e)
+        stop.wait(2)
+
+
+# ---------- Countdown und Pausen-Timer: gehen als Parameter until/back an die Start- bzw. Pausen-Szene ----------
+def load_timers():
+    try:
+        with open(TIMER_FILE, encoding="utf-8") as f:
+            timers.update({k: int(v) for k, v in json.load(f).items() if k in timers})
+    except (OSError, ValueError):
+        pass
+
+
+def save_timers():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(TIMER_FILE, "w", encoding="utf-8") as f:
+        json.dump(timers, f)
+
+
+def timer_start(kind, minutes):
+    if kind not in timers:
+        raise ValueError("unbekannter Timer")
+    m = float(minutes or 0)
+    if not 0 < m <= 600:
+        raise ValueError("Minuten zwischen 1 und 600")
+    timers[kind] = int((time.time() + m * 60) * 1000)
+    save_timers()
+    send_all(infos_snapshot())
+    return f"{'Countdown' if kind == 'start' else 'Pausen-Timer'} läuft: {m:g} Minuten."
+
+
+def timer_stop(kind):
+    if kind in timers:
+        timers[kind] = 0
+        save_timers()
+        send_all(infos_snapshot())
+    return None
+
+
+# ---------- Sounds: eigene Dateien je Alert-Art (follow.mp3 …) und weitere für Kanalpunkte ----------
+SOUND_SLOTS = ALERT_TYPES + ("default",)
+
+
+def sound_files():
+    out = []
+    if os.path.isdir(SOUND_DIR):
+        for fn in sorted(os.listdir(SOUND_DIR)):
+            stem, ext = os.path.splitext(fn)
+            if ext.lower() in SOUND_EXT:
+                out.append({"file": fn, "slot": stem if stem in SOUND_SLOTS else "", "url": sound_url(fn)})
+    return out
+
+
+def sound_url(fn):
+    return f"http://127.0.0.1:{cfg['port']}/sounds/{urllib.parse.quote(fn)}"
+
+
+def sound_upload(body):
+    """{slot: Alert-Art | default | "", filename, data (Base64)} – ohne slot: freier Sound für Kanalpunkte."""
+    slot, name = str(body.get("slot") or ""), os.path.basename(str(body.get("filename") or ""))
+    stem, ext = os.path.splitext(name)
+    ext = ext.lower()
+    if ext not in SOUND_EXT:
+        raise ValueError("Nur MP3, OGG oder WAV")
+    if slot and slot not in SOUND_SLOTS:
+        raise ValueError("unbekannte Alert-Art")
+    blob = base64.b64decode(str(body.get("data") or ""), validate=True)
+    if not 0 < len(blob) <= 5 * 1024 * 1024:
+        raise ValueError("Datei leer oder größer als 5 MB")
+    os.makedirs(SOUND_DIR, exist_ok=True)
+    if slot:
+        for old in os.listdir(SOUND_DIR):                # follow.mp3 ersetzt follow.ogg usw.
+            if os.path.splitext(old)[0] == slot:
+                os.remove(os.path.join(SOUND_DIR, old))
+        target = slot + ext
+    else:
+        clean = _re.sub(r"[^a-z0-9_-]+", "-", stem.lower()).strip("-")[:40] or "sound"
+        target = clean + ext
+        if os.path.splitext(target)[0] in SOUND_SLOTS:
+            target = "x-" + target
+    with open(os.path.join(SOUND_DIR, target), "wb") as f:
+        f.write(blob)
+    push_state()
+    return f"Sound gespeichert: {target}"
+
+
+def sound_delete(fn):
+    fn = os.path.basename(fn)
+    p = os.path.join(SOUND_DIR, fn)
+    if os.path.splitext(fn)[1].lower() not in SOUND_EXT or not os.path.isfile(p):
+        raise ValueError("Sound nicht gefunden")
+    os.remove(p)
+    push_state()
+    return f"Sound entfernt: {fn}"
+
+
+# ---------- Einblendungen: Vorlage + Position, Größe, Texte, Bild/Video, Farbe, Animation, Dauer, Sound ----------
+# Die Overlays aller Packs zeigen sie (build/core/overlay.js); „pack“ = Alert im Stil des Packs mit eigenen Texten.
+OVERLAY_TEMPLATES = ("pack", "card", "banner", "media", "text")
+OVERLAY_DEFAULT = {"id": "", "name": "Einblendung", "template": "card", "pos": "tc", "margin": 48, "size": "m", "width": 480,
+                   "title": "{name}", "line": "{belohnung}", "media": "", "color": "", "bg": "glass", "anim": "slide",
+                   "secs": 6, "sound": "", "volume": 100}
+
+
+def overlay_clean(o):
+    d = dict(OVERLAY_DEFAULT)
+    pick = lambda k, ok: o[k] if k in o and ok(o[k]) else d[k]
+    d.update(
+        id=_re.sub(r"[^a-z0-9]", "", str(o.get("id") or "").lower())[:12] or "o" + os.urandom(3).hex(),
+        name=str(o.get("name") or d["name"]).strip()[:60] or d["name"],
+        template=pick("template", lambda v: v in OVERLAY_TEMPLATES),
+        pos=pick("pos", lambda v: isinstance(v, str) and len(v) == 2 and v[0] in "tmb" and v[1] in "lcr"),
+        size=pick("size", lambda v: v in ("s", "m", "l", "custom")),
+        bg=pick("bg", lambda v: v in ("solid", "glass", "none")),
+        anim=pick("anim", lambda v: v in ("slide", "fade", "pop")),
+        color=pick("color", lambda v: v == "" or bool(_re.fullmatch(r"#[0-9a-fA-F]{6}", str(v)))),
+        title=str(o.get("title", d["title"]))[:160], line=str(o.get("line", d["line"]))[:240],
+        media=os.path.basename(str(o.get("media") or ""))[:80], sound=os.path.basename(str(o.get("sound") or ""))[:80])
+    for k, lo, hi in (("margin", 0, 600), ("width", 16, 1920), ("secs", 1, 120), ("volume", 0, 100)):
+        try:
+            d[k] = max(lo, min(hi, int(o.get(k, d[k]))))
+        except (TypeError, ValueError):
+            pass
+    return d
+
+
+def overlay_by_id(oid):
+    return next((o for o in cfg["overlays"] if oid and o.get("id") == oid), None)
+
+
+def show_overlay(oid, ev):
+    """Einblendung mit den Werten des Ereignisses an alle Szenen; False, wenn es sie nicht (mehr) gibt."""
+    o = overlay_by_id(oid)
+    if not o:
+        return False
+    out = dict(o, title=fill(o["title"], ev), line=fill(o["line"], ev), user=ev.get("user", ""), event=ev.get("type"))
+    out["media"] = media_url(o["media"]) if o["media"] and os.path.isfile(os.path.join(MEDIA_DIR, o["media"])) else ""
+    out["video"] = os.path.splitext(o["media"])[1].lower() in (".webm", ".mp4")
+    out["sound"] = sound_url(o["sound"]) if o["sound"] and os.path.isfile(os.path.join(SOUND_DIR, o["sound"])) else ""
+    send_all({"type": "overlay", "o": out})
+    log(f"Einblendung: {o['name']}")
+    return True
+
+
+def media_url(fn):
+    return f"http://127.0.0.1:{cfg['port']}/media/{urllib.parse.quote(fn)}"
+
+
+def media_files():
+    if not os.path.isdir(MEDIA_DIR):
+        return []
+    return [{"file": fn, "url": media_url(fn), "video": os.path.splitext(fn)[1].lower() in (".webm", ".mp4")}
+            for fn in sorted(os.listdir(MEDIA_DIR)) if os.path.splitext(fn)[1].lower() in MEDIA_EXT]
+
+
+def media_upload(body):
+    """{filename, data (Base64)} – Bilder und kurze Videos bis 15 MB in den Ordner media/."""
+    stem, ext = os.path.splitext(os.path.basename(str(body.get("filename") or "")))
+    ext = ext.lower()
+    if ext not in MEDIA_EXT:
+        raise ValueError("Nur PNG, JPG, GIF, WEBP, WEBM oder MP4")
+    blob = base64.b64decode(str(body.get("data") or ""), validate=True)
+    if not 0 < len(blob) <= 15 * 1024 * 1024:
+        raise ValueError("Datei leer oder größer als 15 MB")
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    target = (_re.sub(r"[^a-z0-9_-]+", "-", stem.lower()).strip("-")[:40] or "bild") + ext
+    with open(os.path.join(MEDIA_DIR, target), "wb") as f:
+        f.write(blob)
+    return target
+
+
+def media_delete(fn):
+    fn = os.path.basename(fn)
+    p = os.path.join(MEDIA_DIR, fn)
+    if os.path.splitext(fn)[1].lower() not in MEDIA_EXT or not os.path.isfile(p):
+        raise ValueError("Datei nicht gefunden")
+    os.remove(p)
+    return f"Entfernt: {fn}"
+
+
+# ---------- Kanalpunkte → Aktionen (frei konfigurierbar in der Oberfläche) ----------
+# Regel: {reward, alert (an/aus), overlay (Einblendung), sound (Datei), scene + scene_secs (0 = bleiben),
+#         source + source_secs (einblenden)}
+def reward_rule(ev):
+    title = (ev.get("title") or "").strip().lower()
+    return next((r for r in cfg["rewards"] if r.get("reward", "").strip().lower() == title and title), None)
+
+
+def set_source_visible(name, visible):
+    """Quelle in der Programmszene ein-/ausblenden (libobs; die Oberfläche folgt über ein gepuffertes Signal)."""
+    tr = obs.obs_get_output_source(0)
+    if not tr:
+        return False
+    try:
+        src = obs.obs_transition_get_active_source(tr)
+        if not src:
+            return False
+        try:
+            scene = obs.obs_scene_from_source(src)
+            item = obs.obs_scene_find_source_recursive(scene, name) if scene else None
+            if item:
+                obs.obs_sceneitem_set_visible(item, bool(visible))
+            return bool(item)
+        finally:
+            obs.obs_source_release(src)
+    finally:
+        obs.obs_source_release(tr)
+
+
+def run_reward(rule, ev):
+    log(f"Kanalpunkte: „{rule.get('reward')}“ von {ev.get('user')}")
+    if rule.get("overlay"):
+        show_overlay(rule["overlay"], ev)
+    if rule.get("sound"):
+        send_all({"type": "sound", "url": sound_url(rule["sound"])})
+    if rule.get("scene"):
+        def scene():
+            prev = current_scene_name()
+            if switch_scene(rule["scene"]) and int(rule.get("scene_secs") or 0) > 0 and prev and prev != rule["scene"]:
+                time.sleep(int(rule["scene_secs"]))
+                switch_scene(prev)
+        threading.Thread(target=scene, daemon=True).start()
+    if rule.get("source"):
+        def source():
+            if set_source_visible(rule["source"], True) and int(rule.get("source_secs") or 0) > 0:
+                time.sleep(int(rule["source_secs"]))
+                set_source_visible(rule["source"], False)
+        threading.Thread(target=source, daemon=True).start()
+
+
+def rewards_load():
+    s = session()
+    if not s:
+        raise ValueError("Erst mit Twitch verbinden")
+    j = helix(s, f"channel_points/custom_rewards?broadcaster_id={s['uid']}")
+    if j is None:
+        raise ValueError("Belohnungen nicht abrufbar (nur mit Partner/Affiliate und Kanalpunkten)")
+    web["rewards"] = sorted({r.get("title", "") for r in j.get("data", []) if r.get("title")}, key=str.lower)
+    return f"{len(web['rewards'])} Belohnungen geladen."
 
 
 # ---------------------------------------------------------------- Lokaler Server für die Szenen
@@ -626,13 +1098,14 @@ class Handler(BaseHTTPRequestHandler):
             if sample:
                 alert(dict(sample), count=False)
             return self.reply(200 if sample else 404, b"ok" if sample else b"unbekannt", "text/plain")
-        if path.startswith("/sounds/"):
-            name = os.path.basename(urllib.parse.unquote(path[8:]))
+        if path.startswith(("/sounds/", "/media/")):
+            folder, types = (SOUND_DIR, SOUND_EXT) if path.startswith("/sounds/") else (MEDIA_DIR, MEDIA_EXT)
+            name = os.path.basename(urllib.parse.unquote(path.split("/", 2)[2]))
             ext = os.path.splitext(name)[1].lower()
-            fp = os.path.join(SOUND_DIR, name)
-            if ext in SOUND_EXT and os.path.isfile(fp):
+            fp = os.path.join(folder, name)
+            if ext in types and os.path.isfile(fp):
                 with open(fp, "rb") as f:
-                    return self.reply(200, f.read(), SOUND_EXT[ext])
+                    return self.reply(200, f.read(), types[ext])
             return self.reply(404, b"nicht gefunden", "text/plain")
         if path in ("/", "/status"):
             with clients_lock:
@@ -665,7 +1138,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n).decode("utf-8") if 0 < n <= 65536 else "{}")
+            limit = {"/api/sound": 8, "/api/media": 21}.get(path, 0) * 1024 * 1024 or 262144
+            if n > limit:
+                raise ValueError("zu groß")
+            body = json.loads(self.rfile.read(n).decode("utf-8") if n > 0 else "{}")
             if not isinstance(body, dict):
                 raise ValueError("JSON-Objekt erwartet")
         except ValueError as e:
@@ -675,8 +1151,13 @@ class Handler(BaseHTTPRequestHandler):
                 web_infos(body)
             elif path == "/api/settings":
                 web_settings(body)
+            elif path == "/api/sound":
+                return self.json(200, {"ok": True, "message": sound_upload(body), "state": web_state()})
+            elif path == "/api/media":
+                fn = media_upload(body)
+                return self.json(200, {"ok": True, "message": f"Gespeichert: {fn}", "file": fn, "state": web_state()})
             elif path == "/api/control":
-                msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1")
+                msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1", body=body)
                 return self.json(200, {"ok": True, "message": msg, "state": web_state()})
             else:
                 return self.json(404, {"error": "unbekannt"})
@@ -1018,7 +1499,7 @@ def normalize(typ, ev):
                 "amount": ev.get("viewers", 0)}
     if typ == "channel.channel_points_custom_reward_redemption.add":
         return {"type": "redeem", "user": name, "title": (ev.get("reward") or {}).get("title", ""),
-                "text": ev.get("user_input", "")}
+                "text": ev.get("user_input", ""), "cost": (ev.get("reward") or {}).get("cost", 0)}
     return None
 
 
@@ -1130,7 +1611,7 @@ SAMPLES = {
     "gift": {"type": "gift", "user": "Lichtbringerin", "amount": 5, "tier": 1},
     "cheer": {"type": "cheer", "user": "Runenleser", "amount": 500, "text": "Für neue Server-Hardware"},
     "raid": {"type": "raid", "user": "VOIDCrew", "amount": 23},
-    "redeem": {"type": "redeem", "user": "Sternenstaub", "title": "Trink was!", "text": ""},
+    "redeem": {"type": "redeem", "user": "Sternenstaub", "title": "Trink was!", "text": "", "cost": 500},
 }
 
 
@@ -1364,7 +1845,7 @@ def save_infos(pid):
 
 def infos_snapshot():
     with lock:
-        return {"type": "infos", "packs": {k: dict(v) for k, v in infos["packs"].items()}}
+        return {"type": "infos", "packs": {k: dict(v) for k, v in infos["packs"].items()}, "timers": dict(timers)}
 
 
 def each_source(fn):
@@ -1719,31 +2200,95 @@ def on_logout(props, prop):
     return False
 
 
-def script_update(settings, defer_restart=False):
-    """defer_restart: aus einer Anfrage der Oberfläche – den Server erst nach der Antwort neu starten."""
-    settings_ref[0] = settings
-    cfg["repo"] = obs.obs_data_get_string(settings, "repo").strip() or DEFAULT_REPO
+# ---------- Einstellungen: zentral statt pro Szenensammlung ----------
+# OBS speichert Skript-Einstellungen pro Szenensammlung; beim Wechsel lädt das Skript neu und hätte andere Ziele,
+# Lautstärke usw. Darum liegen sie in settings.json. Im OBS-Fenster stehen nur noch Port, Pack-Quelle und der
+# Heimnetz-Schalter; Änderungen dort landen ebenfalls hier.
+GLOBAL_KEYS = ("port", "remote_on", "repo", "volume", "goal_follow", "goal_sub", "goal_bits", "hide_cmd", "tele_on",
+               "show_latest", "latest_items", "tele_url", "irl_auto", "irl_source", "irl_delay", "irl_back", "ignore",
+               "alerts", "rewards", "overlays")
+WINDOW_KEYS = ("port", "repo", "remote_on")
+glob = {"loaded": None, "synced": False}
+
+
+def read_obs(settings):
+    """Werte aus den Skript-Einstellungen dieser Sammlung (nur noch für die Übernahme und das OBS-Fenster)."""
     g = lambda k: obs.obs_data_get_int(settings, k)
-    port = g("port")
-    remote = obs.obs_data_get_bool(settings, "remote_on")
-    port_changed = port != cfg["port"] or remote != cfg["remote_on"] or server[0] is None
-    first = started[0] is None
-    cfg.update(port=port, remote_on=remote, volume=g("volume"), goal_follow=g("goal_follow"),
-               goal_sub=g("goal_sub"), goal_bits=g("goal_bits"),
-               hide_cmd=obs.obs_data_get_bool(settings, "hide_cmd"),
-               tele_on=obs.obs_data_get_bool(settings, "tele_on"),
-               show_latest=obs.obs_data_get_bool(settings, "show_latest"),
-               latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
-               tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
-               irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
-               irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
-               irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
-               ignore={n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()})
-    if port_changed and defer_restart:
+    return dict(port=g("port"), remote_on=obs.obs_data_get_bool(settings, "remote_on"),
+                repo=obs.obs_data_get_string(settings, "repo").strip() or DEFAULT_REPO,
+                volume=g("volume"), goal_follow=g("goal_follow"), goal_sub=g("goal_sub"), goal_bits=g("goal_bits"),
+                hide_cmd=obs.obs_data_get_bool(settings, "hide_cmd"), tele_on=obs.obs_data_get_bool(settings, "tele_on"),
+                show_latest=obs.obs_data_get_bool(settings, "show_latest"),
+                latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
+                tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
+                irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
+                irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
+                irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
+                ignore=sorted({n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()}))
+
+
+def load_global():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {k: data[k] for k in GLOBAL_KEYS if k in data}
+    except (OSError, ValueError):
+        return None
+
+
+def save_global():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    out = {k: (sorted(cfg[k]) if k == "ignore" else cfg[k]) for k in GLOBAL_KEYS}
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SETTINGS_FILE)
+
+
+def apply_settings(values):
+    for k, v in values.items():
+        if k in GLOBAL_KEYS:
+            cfg[k] = set(v) if k == "ignore" else v
+
+
+def sync_window(settings):
+    """Die Felder im OBS-Fenster zeigen die zentralen Werte."""
+    if settings is not None:
+        obs.obs_data_set_int(settings, "port", cfg["port"])
+        obs.obs_data_set_string(settings, "repo", cfg["repo"])
+        obs.obs_data_set_bool(settings, "remote_on", cfg["remote_on"])
+
+
+def script_update(settings, defer_restart=False):
+    """Beim Laden und bei Änderungen im OBS-Fenster. defer_restart: aus der Oberfläche – Server erst nach der Antwort
+    neu starten."""
+    settings_ref[0] = settings
+    before = (cfg["port"], cfg["remote_on"])
+    vals = read_obs(settings)
+    if glob["loaded"] is None:
+        glob["loaded"] = load_global()
+        if glob["loaded"] is None:                       # erstes Mal: Einstellungen dieser Sammlung übernehmen
+            vals["irl_auto"] = True                      # schaltet nur in IRL-Szenen um, darf überall an sein
+            apply_settings(vals)
+            save_global()
+            log("Einstellungen gelten jetzt für alle Szenensammlungen (settings.json).")
+            glob["loaded"] = {}
+        else:
+            apply_settings(glob["loaded"])
+    if not glob["synced"]:                               # beim Laden: Fenster auf die zentralen Werte setzen
+        glob["synced"] = True
+        sync_window(settings)
+    else:                                                # später: Änderung im OBS-Fenster
+        changed = {k: vals[k] for k in WINDOW_KEYS if vals[k] != cfg[k]}
+        if changed:
+            apply_settings(changed)
+            save_global()
+    restart = (cfg["port"], cfg["remote_on"]) != before or server[0] is None
+    if restart and defer_restart:
         threading.Timer(0.5, start_server).start()
-    elif port_changed:
+    elif restart:
         start_server()
-    if first:                            # Twitch-Verbindung einmal beim Laden starten
+    if started[0] is None:                               # Twitch-Verbindung einmal beim Laden starten
         started[0] = True
         start_eventsub()
     push_state()
@@ -1768,7 +2313,10 @@ def script_load(settings):
     threading.Thread(target=telemetry_loop, daemon=True).start()
     obs.timer_add(irl_tick, 500)
     load_infos()
+    load_timers()
     obs.timer_add(migrate_tick, 5000)
+    threading.Thread(target=obs_stats_loop, daemon=True).start()
+    obs.obs_frontend_add_event_callback(on_frontend_event)
     log(f"Daten und Sounds: {DATA_DIR}")
     load_state()
     for key, desc, fn in HOTKEYS:
@@ -1790,6 +2338,7 @@ def script_save(settings):
 def script_unload():
     obs.timer_remove(irl_tick)
     obs.timer_remove(migrate_tick)
+    obs.obs_frontend_remove_event_callback(on_frontend_event)
     stop.set()
     stop_eventsub()
     stop_server()
@@ -1907,6 +2456,20 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;font-size:14px}
 .toast.on{opacity:1}
 .hidden{display:none!important}
+/* Einblendungen: Editor mit Vorschau im 16:9-Rahmen (1920 × 1080, skaliert) */
+.ov-layout{display:grid;gap:24px;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:start}
+.ov-side{position:sticky;top:16px}
+@media (max-width:900px){.ov-layout{grid-template-columns:minmax(0,1fr)}.ov-side{position:static;order:-1}}
+.ov-preview{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:var(--r-md);border:1px solid var(--line);
+  background:radial-gradient(60% 80% at 20% 30%,#2a1d55 0,transparent 70%),radial-gradient(60% 80% at 85% 70%,#14306b 0,transparent 70%),#0b0c1d}
+.ov-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;font-family:var(--sans)}
+.posgrid{display:grid;grid-template-columns:repeat(3,40px);gap:6px}
+.posgrid button{height:40px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--raised);cursor:pointer;padding:0}
+.posgrid button.on{background:var(--violet);border-color:var(--violet)}
+.posgrid button[disabled]{opacity:.35;cursor:not-allowed}
+.ov-item{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+.ov-item:first-child{border-top:0;padding-top:0}
+.thumb{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--r-sm);background:var(--raised);flex:none}
 </style>
 </head>
 <body>
@@ -1916,6 +2479,8 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   <nav class="tabs" id="tabs">
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
+    <button data-tab="alerts">Alerts</button>
+    <button data-tab="overlays">Einblendungen</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -1945,8 +2510,32 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   </section>
 
   <section id="tab-live" class="hidden">
-    <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
+    <div class="page-head"><h1>Live</h1><p>OBS steuern, Stream im Blick, Alerts, Ziele, Timer und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Stream</h2><span class="chip chip-sm" id="stream-chip"></span></div>
+        <dl class="meta" id="stream-stats"></dl>
+        <div class="row"><button class="btn btn-sm" id="stream-btn"></button><button class="btn btn-sm" id="rec-btn"></button></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Szenen</h2><p class="lead">Ein Klick schaltet in OBS um.</p></div>
+        <div class="row" id="scene-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Audio</h2><p class="lead">Quellen stumm schalten und wieder an.</p></div>
+        <div class="row" id="audio-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Timer</h2><p class="lead">Countdown in „Stream startet“, Pausen-Timer in „Kurze Pause“.</p></div>
+        <div class="field"><label>Countdown bis Stream-Start <span class="muted" id="timer-start-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-start-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="start" data-min="#timer-start-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="start">Stopp</button></div></div>
+        <div class="field"><label>Pausen-Timer <span class="muted" id="timer-pause-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-pause-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="pause" data-min="#timer-pause-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="pause">Stopp</button></div></div>
+      </div>
       <div class="card stack">
         <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
         <p class="lead" id="alert-state" style="margin:0"></p>
@@ -1986,6 +2575,84 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       <div class="card stack hidden" id="irl-card">
         <h2>IRL</h2>
         <p id="irl-state"></p>
+        <div class="row" id="irl-cams"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-alerts" class="hidden">
+    <div class="page-head"><h1>Alerts</h1><p>Je Alert-Art an/aus, Lautstärke, Mindestwert, eigene Texte und Sounds; dazu Aktionen für Kanalpunkte. Gilt für alle Packs.</p></div>
+    <div class="grid" id="alert-cards"></div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card stack span-all">
+        <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: eigene Einblendung zeigen, Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten. Einblendungen gestaltest du unter „Einblendungen“.</p>
+        <div id="rules" class="stack"></div>
+        <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
+      </div>
+      <div class="card stack span-all">
+        <div><h2>Sounds für Kanalpunkte</h2><p class="lead" style="margin:0">MP3, OGG oder WAV bis 5 MB. Die Sounds je Alert-Art stehen oben bei der jeweiligen Art.</p></div>
+        <div id="extra-sounds" class="stack" style="gap:8px"></div>
+        <div><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="" hidden></label></div>
+      </div>
+    </div>
+    <datalist id="reward-titles"></datalist>
+  </section>
+
+  <section id="tab-overlays" class="hidden">
+    <div class="page-head"><h1>Einblendungen</h1><p>Eigene Einblendungen für Kanalpunkte und Alerts: Vorlage wählen, dann Texte, Bild oder Video, Position, Größe, Farbe, Animation und Sound einstellen. Die Packs zeigen sie in ihrer Schrift. Verknüpfen unter „Alerts“.</p></div>
+    <div class="stack">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Deine Einblendungen</h2><button class="btn btn-sm btn-primary" id="ov-new">Neue Einblendung</button></div>
+        <div id="ov-list"></div>
+      </div>
+      <div class="card hidden" id="ov-editor">
+        <div class="ov-layout">
+          <div class="stack" id="ov-form">
+            <h2 id="ov-head">Einblendung bearbeiten</h2>
+            <div class="field"><label>Name</label><input type="text" data-ov="name" maxlength="60"></div>
+            <div class="field"><label>Vorlage</label><select data-ov="template" style="width:100%">
+              <option value="card">Karte – Bild und Text</option><option value="banner">Banner – Leiste über die Breite</option>
+              <option value="media">Nur Bild oder Video</option><option value="text">Nur Text</option>
+              <option value="pack">Alert im Stil des Packs</option></select><span class="hint" id="ov-tpl-hint"></span></div>
+            <div class="field" data-for="title"><label>Titel</label><input type="text" data-ov="title" maxlength="160"></div>
+            <div class="field" data-for="line"><label>Zeile darunter</label><input type="text" data-ov="line" maxlength="240">
+              <span class="hint">Platzhalter: {name} {belohnung} {eingabe} {kosten}, bei Alerts auch {anzahl} {monate} {stufe}</span></div>
+            <div class="field" data-for="media"><label>Bild oder Video</label>
+              <div class="row"><select data-ov="media" style="flex:1"></select><label class="btn btn-sm">Hochladen<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.webm,.mp4,image/*,video/webm,video/mp4" id="ov-upload" hidden></label></div>
+              <span class="hint">PNG, JPG, GIF, WEBP, WEBM oder MP4 bis 15 MB. Videos laufen in Schleife, mit Ton, wenn kein Sound gewählt ist.</span></div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))" data-for="pos">
+              <div class="field"><label>Position</label><div class="posgrid" id="ov-pos"></div></div>
+              <div class="stack" style="gap:12px">
+                <div class="field"><label>Abstand zum Rand (px)</label><input type="number" min="0" max="600" data-ov="margin"></div>
+                <div class="field"><label>Größe</label><select data-ov="size" style="width:100%"><option value="s">Klein</option><option value="m">Mittel</option><option value="l">Groß</option><option value="custom">Eigene</option></select></div>
+                <div class="field hidden" id="ov-width-f"><label id="ov-width-l">Breite (px)</label><input type="number" min="16" max="1920" data-ov="width"></div>
+              </div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field" data-for="color"><label>Farbe</label><div class="row"><label class="check"><input type="checkbox" id="ov-packcolor">vom Pack</label><input type="color" id="ov-color" value="#b303f8" style="width:52px;height:40px;border:0;background:none;padding:0"></div></div>
+              <div class="field" data-for="bg"><label>Hintergrund</label><select data-ov="bg" style="width:100%"><option value="glass">Durchscheinend</option><option value="solid">Deckend</option><option value="none">Ohne</option></select></div>
+              <div class="field" data-for="anim"><label>Animation</label><select data-ov="anim" style="width:100%"><option value="slide">Hereinschieben</option><option value="fade">Einblenden</option><option value="pop">Aufploppen</option></select></div>
+              <div class="field"><label>Dauer (s)</label><input type="number" min="1" max="120" data-ov="secs"></div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field"><label>Sound</label><select data-ov="sound" style="width:100%"></select><span class="hint">Sounds lädst du unter „Alerts“ hoch.</span></div>
+              <div class="field"><label>Lautstärke <span class="muted" id="ov-vol-v"></span></label><input type="range" min="0" max="100" data-ov="volume"></div>
+            </div>
+            <div class="row"><button class="btn btn-primary" id="ov-save">Speichern</button><button class="btn" id="ov-test">In OBS testen</button>
+              <button class="btn" id="ov-close">Schließen</button><button class="btn btn-danger" id="ov-del">Löschen</button></div>
+          </div>
+          <div class="ov-side">
+            <div class="label" style="margin-bottom:8px">Vorschau</div>
+            <div class="ov-preview" id="ov-preview"><div class="ov-stage" id="ov-stage"></div></div>
+            <div class="row" style="margin-top:10px"><button class="btn btn-sm" id="ov-play">Animation abspielen</button>
+              <span class="small muted" id="ov-note">Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card stack">
+        <div><h2>Bilder und Videos</h2><p class="lead" style="margin:0">Hochgeladene Dateien für Einblendungen.</p></div>
+        <div id="ov-media"></div>
       </div>
     </div>
   </section>
@@ -2211,7 +2878,10 @@ document.addEventListener('click',async ev=>{
   if(b){
     if(b.dataset.confirm&&!confirm(b.dataset.confirm))return;
     b.disabled=true;
-    try{const r=await api('/api/control',{action:b.dataset.act,id:b.dataset.id});S=r.state;render();if(r.message)toast(r.message)}
+    const body={action:b.dataset.act,id:b.dataset.id};
+    if(b.dataset.min)body.minutes=parseFloat($(b.dataset.min).value||'0');
+    if(b.dataset.on!=null)body.on=b.dataset.on==='1';
+    try{const r=await api('/api/control',body);S=r.state;render();if(r.message)toast(r.message)}
     catch(e){toast(e.message)}
     finally{b.disabled=false}
     return;
@@ -2275,7 +2945,323 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
+  renderObs();renderAlerts();renderOverlays();
 }
+
+/* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
+const hms=s=>{s=Math.max(0,s|0);const h=s/3600|0,m=(s%3600)/60|0;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')};
+function setBtn(b,act,label,primary,confirmText){b.dataset.act=act;b.textContent=label;b.classList.toggle('btn-primary',!!primary);
+  if(confirmText)b.dataset.confirm=confirmText;else delete b.dataset.confirm}
+function renderObs(){
+  const o=S.obs||{},st=o.stats||{};
+  $('#stream-chip').textContent=o.streaming?`Live · ${hms(Date.now()/1000-(o.since||Date.now()/1000))}`:(o.recording?'Aufnahme läuft':'Offline');
+  $('#stream-chip').className='chip chip-sm '+(o.streaming?'chip-live chip-ok':o.recording?'chip-warn':'');
+  const pct=(a,b)=>b?` (${(a/b*100).toFixed(1).replace('.',',')} %)`:'';
+  const rows=[];
+  if(o.streaming){rows.push(['Bitrate',st.kbps!=null?num(st.kbps)+' kbit/s':'–']);rows.push(['Verlorene Frames (Netz)',num(st.dropped||0)+pct(st.dropped||0,st.frames)])}
+  rows.push(['FPS',st.fps?String(st.fps).replace('.',','):'–']);
+  rows.push(['Verzögert (Rendern)',num(st.lagged||0)+pct(st.lagged||0,st.rendered)]);
+  rows.push(['Übersprungen (Encoder)',num(st.skipped||0)+pct(st.skipped||0,st.encoded)]);
+  $('#stream-stats').innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  setBtn($('#stream-btn'),o.streaming?'stream_stop':'stream_start',o.streaming?'Stream beenden':'Stream starten',!o.streaming,o.streaming?'Stream wirklich beenden?':'Stream jetzt starten?');
+  setBtn($('#rec-btn'),o.recording?'rec_stop':'rec_start',o.recording?'Aufnahme stoppen':'Aufnahme starten',false,o.recording?'Aufnahme stoppen?':null);
+  const sc=(o.scenes||[]).map(n=>`<button class="btn btn-sm ${n===o.current?'btn-primary':''}" data-act="scene" data-id="${esc(n)}">${esc(n)}</button>`).join('');
+  if($('#scene-buttons').innerHTML!==sc)$('#scene-buttons').innerHTML=sc||'<span class="muted small">Keine Szenen gefunden.</span>';
+  const au=(o.audio||[]).map(a=>`<button class="btn btn-sm ${a.muted?'btn-danger':''}" data-act="mute" data-id="${esc(a.name)}" data-on="${a.muted?0:1}">${a.muted?'Stumm: ':''}${esc(a.name)}</button>`).join('');
+  if($('#audio-buttons').innerHTML!==au)$('#audio-buttons').innerHTML=au||'<span class="muted small">Keine Audioquellen.</span>';
+  const left=k=>{const t=(o.timers||{})[k];return t>Date.now()?'noch '+hms((t-Date.now())/1000):''};
+  $('#timer-start-left').textContent=left('start');$('#timer-pause-left').textContent=left('pause');
+  $('#irl-cams').innerHTML=(o.cams||[]).map(c=>`<span class="chip chip-sm ${c.live?'chip-ok':'chip-danger'}">${esc(c.name)}: ${c.live?'Signal':'kein Signal'}</span>`).join('');
+}
+
+/* ---------- Alerts je Art ---------- */
+const ATYPES=[['follow','Follow'],['sub','Abo'],['resub','Abo verlängert'],['gift','Geschenk-Abos'],['cheer','Bits'],['raid','Raid'],['redeem','Kanalpunkte']];
+const MINLBL={cheer:'Erst ab … Bits',gift:'Erst ab … verschenkten Abos',raid:'Erst ab … Leuten'};
+let alertsBuilt=false;
+function soundOf(slot){return (S.sounds||[]).find(x=>x.slot===slot)}
+function buildAlerts(){
+  const box=$('#alert-cards');box.innerHTML='';
+  ATYPES.forEach(([t,l])=>{
+    const c=el('div','card stack');c.dataset.type=t;
+    c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
+      <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
+      ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Darstellung</label><select data-a="overlay" style="width:100%"></select></div>
+      <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
+      <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
+      <div class="row"><span class="small muted" data-snd></span></div>
+      <div class="row"><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="${t}" hidden></label>
+        <button class="btn btn-sm btn-danger hidden" data-del>Sound entfernen</button>
+        <button class="btn btn-sm" data-act="test_${t}">Testen</button></div>`;
+    const send=debounce(()=>{const a={};c.querySelectorAll('[data-a]').forEach(i=>a[i.dataset.a]=i.type==='checkbox'?i.checked:(i.type==='range'||i.type==='number')?parseInt(i.value||'0',10):i.value);
+      api('/api/settings',{alerts:{[t]:a}}).then(r=>{S=r.state}).catch(e=>toast('Nicht gespeichert: '+e.message))},600);
+    c.querySelectorAll('[data-a]').forEach(i=>{i.addEventListener(i.type==='checkbox'?'change':'input',send);
+      if(i.type==='range')i.addEventListener('input',()=>c.querySelector('[data-v]').textContent=i.value+' %')});
+    box.append(c);
+  });
+  alertsBuilt=true;
+}
+function renderAlerts(){
+  if(!alertsBuilt)buildAlerts();
+  ATYPES.forEach(([t])=>{
+    const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    const os=c.querySelector('[data-a=overlay]'),oo=ovOptions('Standard-Alert des Packs');
+    if(os.dataset.o!==oo){os.dataset.o=oo;os.innerHTML=oo}
+    c.querySelectorAll('[data-a=kind],[data-a=detail]').forEach(i=>i.closest('.field').classList.toggle('hidden',!!a.overlay&&(S.overlays||[]).some(o=>o.id===a.overlay)));
+    c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
+    c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
+    const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
+    c.querySelector('[data-snd]').textContent=snd?`Sound: ${snd.file}`:def?`Sound: ${def.file} (für alle)`:'Sound: eingebauter Klang';
+    const del=c.querySelector('[data-del]');del.classList.toggle('hidden',!snd);del.dataset.file=snd?snd.file:'';
+  });
+  const extra=(S.sounds||[]).filter(x=>!x.slot);
+  const ex=extra.map(x=>`<div class="row"><span>${esc(x.file)}</span><button class="btn btn-sm" data-play="${esc(x.url)}">Anhören</button><button class="btn btn-sm btn-danger" data-act="sound_delete" data-id="${esc(x.file)}" data-confirm="${esc(x.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#extra-sounds').innerHTML!==ex)$('#extra-sounds').innerHTML=ex;
+  $('#reward-titles').innerHTML=(S.reward_titles||[]).map(t=>`<option value="${esc(t)}">`).join('');
+  if(!rulesDirty)renderRules();
+}
+document.addEventListener('click',ev=>{
+  const d=ev.target.closest('[data-del]');
+  if(d&&d.dataset.file&&confirm('Eigenen Sound entfernen?'))api('/api/control',{action:'sound_delete',id:d.dataset.file}).then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast(e.message));
+  const p=ev.target.closest('[data-play]');if(p)new Audio(p.dataset.play).play().catch(()=>toast('Abspielen nicht möglich'));
+});
+document.addEventListener('change',ev=>{
+  const i=ev.target.closest('[data-upload]');if(!i||!i.files[0])return;
+  const file=i.files[0];if(file.size>5*1024*1024){toast('Größer als 5 MB');return}
+  const rd=new FileReader();rd.onload=()=>api('/api/sound',{slot:i.dataset.upload,filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file);i.value='';
+});
+
+/* ---------- Kanalpunkte-Regeln (Entwurf bis „Regeln speichern“) ---------- */
+let rules=null,rulesDirty=false;
+function ruleRow(r,i){
+  const opt=(list,val,none)=>`<option value="">${none}</option>`+list.map(x=>`<option value="${esc(x)}" ${x===val?'selected':''}>${esc(x)}</option>`).join('');
+  const sounds=(S.sounds||[]).map(x=>x.file),scenes=(S.obs&&S.obs.scenes)||[];
+  return `<div class="alert stack" style="gap:10px" data-rule="${i}">
+    <div class="form-grid">
+      <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Einblendung</label><select data-r="overlay">${ovOptions('keine',r.overlay)}</select></div>
+      <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
+      <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
+      <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
+    </div>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Standard-Alert des Packs zeigen</label>
+      <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
+}
+function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
+function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.querySelectorAll('[data-r]').forEach(i=>r[i.dataset.r]=i.type==='checkbox'?i.checked:i.type==='number'?parseInt(i.value||'0',10):i.value);return r})}
+$('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
+$('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
+$('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();render();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+
+/* ---------- Einblendungen: Liste, Editor (Entwurf bis „Speichern“), Vorschau ---------- */
+const OV_TPL={card:'Karte',banner:'Banner',media:'Bild/Video',text:'Text',pack:'Alert des Packs'};
+const OV_HINT={card:'Bild oben, darunter Titel und Zeile.',banner:'Leiste über die ganze Breite – oben, mittig oder unten.',
+  media:'Nur das Bild oder Video, ohne Text.',text:'Großer Text in der Farbe, auf Wunsch ohne Hintergrund.',
+  pack:'Der Alert des Packs mit deinen Texten, deinem Sound und deiner Dauer. Position und Aussehen bestimmt das Pack.'};
+const OV_SAMPLE={name:'Sternenstaub',belohnung:'Trink was!',eingabe:'Ein Hoch auf den Chat!',kosten:'500',anzahl:'5',monate:'14',stufe:'1'};
+const ovFill=t=>String(t||'').replace(/\{(\w+)\}/g,(m,k)=>k in OV_SAMPLE?OV_SAMPLE[k]:m);
+let ovDraft=null,ovDirty=false;
+function ovOptions(none,val){return `<option value="">${esc(none)}</option>`+(S.overlays||[]).map(o=>`<option value="${esc(o.id)}" ${o.id===val?'selected':''}>${esc(o.name)}</option>`).join('')}
+['tl','tc','tr','ml','mc','mr','bl','bc','br'].forEach(p=>{const b=el('button');b.type='button';b.dataset.pos=p;b.title={t:'oben',m:'Mitte',b:'unten'}[p[0]]+' '+{l:'links',c:'mittig',r:'rechts'}[p[1]];$('#ov-pos').append(b)});
+function ovUsed(id){const r=(S.rewards||[]).filter(x=>x.overlay===id).map(x=>'„'+x.reward+'“'),a=ATYPES.filter(([t])=>((S.alerts||{})[t]||{}).overlay===id).map(([,l])=>l);
+  return [...a,...r].join(', ')}
+function renderOverlays(){
+  const list=(S.overlays||[]).map(o=>`<div class="ov-item"><div style="min-width:0"><strong>${esc(o.name)}</strong> <span class="chip chip-sm">${OV_TPL[o.template]||o.template}</span>
+    <div class="small muted">${ovUsed(o.id)?'Für: '+esc(ovUsed(o.id)):'Noch nicht verknüpft – unter „Alerts“ einer Art oder Kanalpunkt-Regel zuordnen.'}</div></div>
+    <div class="row"><button class="btn btn-sm" data-ov-edit="${esc(o.id)}">Bearbeiten</button><button class="btn btn-sm" data-act="overlay_test" data-id="${esc(o.id)}">In OBS testen</button></div></div>`).join('')
+    ||'<span class="muted small">Noch keine Einblendung. „Neue Einblendung“ legt eine an.</span>';
+  if($('#ov-list').innerHTML!==list)$('#ov-list').innerHTML=list;
+  const md=(S.media||[]).map(m=>`<div class="ov-item"><div class="row" style="min-width:0">${m.video?`<video class="thumb" src="/media/${encodeURIComponent(m.file)}" muted></video>`:`<img class="thumb" src="/media/${encodeURIComponent(m.file)}" alt="">`}<span>${esc(m.file)}</span></div>
+    <button class="btn btn-sm btn-danger" data-act="media_delete" data-id="${esc(m.file)}" data-confirm="${esc(m.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#ov-media').innerHTML!==md)$('#ov-media').innerHTML=md;
+  if(ovDraft)ovOptionsForm();
+}
+function ovOptionsForm(){
+  const ms=$('#ov-form [data-ov=media]'),ss=$('#ov-form [data-ov=sound]');
+  const mo='<option value="">kein Bild</option>'+(S.media||[]).map(m=>`<option value="${esc(m.file)}">${esc(m.file)}</option>`).join('');
+  const so='<option value="">kein Sound</option>'+(S.sounds||[]).map(x=>`<option value="${esc(x.file)}">${esc(x.file)}</option>`).join('');
+  if(ms.dataset.o!==mo){ms.dataset.o=mo;ms.innerHTML=mo;ms.value=ovDraft.media||''}
+  if(ss.dataset.o!==so){ss.dataset.o=so;ss.innerHTML=so;ss.value=ovDraft.sound||''}
+}
+function ovOpen(o){
+  ovDraft=JSON.parse(JSON.stringify(o));ovDirty=false;
+  $('#ov-editor').classList.remove('hidden');$('#ov-head').textContent=o.id?'Einblendung bearbeiten':'Neue Einblendung';
+  $('#ov-del').classList.toggle('hidden',!o.id);
+  ovOptionsForm();
+  $$('#ov-form [data-ov]').forEach(i=>i.value=ovDraft[i.dataset.ov]??'');
+  $('#ov-packcolor').checked=!ovDraft.color;$('#ov-color').value=ovDraft.color||'#b303f8';
+  ovSync();$('#ov-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function ovRead(){
+  $$('#ov-form [data-ov]').forEach(i=>ovDraft[i.dataset.ov]=i.type==='number'||i.type==='range'?parseInt(i.value||'0',10):i.value);
+  ovDraft.color=$('#ov-packcolor').checked?'':$('#ov-color').value;
+}
+function ovSync(){
+  const d=ovDraft,pack=d.template==='pack';
+  $('#ov-tpl-hint').textContent=OV_HINT[d.template]||'';
+  $$('#ov-form [data-for]').forEach(f=>{const k=f.dataset.for;
+    f.classList.toggle('hidden',pack&&k!=='title'&&k!=='line'||(d.template==='media'&&(k==='title'||k==='line'))||(d.template==='text'&&k==='media'))});
+  $('#ov-width-f').classList.toggle('hidden',d.size!=='custom');
+  $('#ov-width-l').textContent=d.template==='banner'?'Höhe (px)':d.template==='text'?'Schriftgröße (px)':'Breite (px)';
+  $('#ov-color').disabled=$('#ov-packcolor').checked;
+  $('#ov-vol-v').textContent=(d.volume??100)+' %';
+  $$('#ov-pos button').forEach(b=>{b.classList.toggle('on',b.dataset.pos===d.pos);b.disabled=d.template==='banner'&&b.dataset.pos[1]!=='c'});
+  $('#ov-note').textContent=pack?'Angedeutet – in OBS erscheint der Alert des Packs.':'Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.';
+  ovPreview(false);
+}
+function ovView(){
+  const d=ovDraft,m=(S.media||[]).find(x=>x.file===d.media);
+  const o=Object.assign({},d,{title:ovFill(d.title),line:ovFill(d.line),media:m?'/media/'+encodeURIComponent(m.file):'',video:!!(m&&m.video),
+    sound:d.sound?'/sounds/'+encodeURIComponent(d.sound):''});
+  if(d.template==='pack')Object.assign(o,{template:'card',media:'',bg:'solid',pos:'mc',size:'m',anim:'pop',color:''});
+  return o;
+}
+function ovScale(){const p=$('#ov-preview');$('#ov-stage').style.transform=`scale(${p.clientWidth/1920})`}
+new ResizeObserver(ovScale).observe($('#ov-preview'));
+function ovPreview(play){
+  const st=$('#ov-stage');st.innerHTML='';if(!ovDraft)return;ovScale();
+  const o=ovView();
+  if(play){ovlPlay(o,st,{volume:((S.live&&S.live.volume)??70)/100});return}
+  const n=ovlNode(Object.assign({},o,{mute:true}));n.box.style.transition='none';n.box.classList.add('o-in');st.append(n.wrap);
+}
+$('#ov-form').addEventListener('input',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-form').addEventListener('change',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-pos').addEventListener('click',ev=>{const b=ev.target.closest('[data-pos]');if(!b||!ovDraft)return;ovDraft.pos=b.dataset.pos;ovDirty=true;ovSync()});
+$('#ov-new').onclick=()=>ovOpen({id:'',name:'Neue Einblendung',template:'card',pos:'tc',margin:48,size:'m',width:480,title:'{name}',line:'{belohnung}',
+  media:'',color:'',bg:'glass',anim:'slide',secs:6,sound:'',volume:100});
+$('#ov-list').addEventListener('click',ev=>{const b=ev.target.closest('[data-ov-edit]');if(!b)return;
+  if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;
+  const o=(S.overlays||[]).find(x=>x.id===b.dataset.ovEdit);if(o)ovOpen(o)});
+$('#ov-play').onclick=()=>ovPreview(true);
+$('#ov-close').onclick=()=>{if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden')};
+async function ovSave(){
+  ovRead();if(!ovDraft.id)ovDraft.id='o'+Math.random().toString(16).slice(2,8);
+  const list=(S.overlays||[]).filter(o=>o.id!==ovDraft.id);const i=(S.overlays||[]).findIndex(o=>o.id===ovDraft.id);
+  list.splice(i<0?list.length:i,0,ovDraft);
+  const r=await api('/api/settings',{overlays:list});S=r.state;ovDirty=false;$('#ov-head').textContent='Einblendung bearbeiten';$('#ov-del').classList.remove('hidden');render();
+}
+$('#ov-save').onclick=()=>ovSave().then(()=>toast('Einblendung gespeichert')).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#ov-test').onclick=async()=>{try{if(ovDirty||!ovDraft.id)await ovSave();const r=await api('/api/control',{action:'overlay_test',id:ovDraft.id});S=r.state;toast('An die Szenen geschickt')}catch(e){toast(e.message)}};
+$('#ov-del').onclick=async()=>{if(!ovDraft||!confirm(`„${ovDraft.name}“ löschen? Verknüpfte Alerts zeigen dann wieder den Standard-Alert.`))return;
+  try{const r=await api('/api/settings',{overlays:(S.overlays||[]).filter(o=>o.id!==ovDraft.id)});S=r.state;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden');render();toast('Gelöscht')}
+  catch(e){toast(e.message)}};
+$('#ov-upload').onchange=()=>{const i=$('#ov-upload'),file=i.files[0];if(!file)return;i.value='';
+  if(file.size>15*1024*1024){toast('Größer als 15 MB');return}
+  toast('Wird hochgeladen …');
+  const rd=new FileReader();rd.onload=()=>api('/api/media',{filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;if(ovDraft){ovOptionsForm();ovDraft.media=r.file;$('#ov-form [data-ov=media]').value=r.file;ovDirty=true;ovSync()}render();toast(r.message)})
+    .catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file)};
+
+/* =========================================================
+   Einblendungen aus VOID Studio (build/core/overlay.js) – gemeinsam für alle Packs und die Vorschau der Oberfläche.
+   packs.py setzt diese Datei in jedes Pack ein, embed_web.py in die Oberfläche (Markierung @OVERLAY@).
+
+   Nachricht {type:'overlay', o:{template, pos, margin, size, width, title, line, media, video, color, bg, anim, secs, sound, volume}}
+   Vorlagen: card (Karte mit Bild), banner (Leiste), media (nur Bild/Video), text (nur Text).
+   „pack“ zeigt die Szene als Alert im eigenen Stil (ovlHost). Farbe und Titelschrift kommen aus dem Pack
+   (--ovl-acc, --ovl-font), eine eigene Farbe in o.color geht vor.
+   ========================================================= */
+const OVL_SIZE={card:{s:360,m:480,l:640},banner:{s:64,m:88,l:120},media:{s:320,m:480,l:720},text:{s:44,m:64,l:96}};
+const OVL_CSS=`
+.ovl-pos{position:absolute;z-index:60;pointer-events:none}
+.ovl{--a:var(--ovl-acc,#B303F8);color:#F5F6FA;font-family:var(--ovl-body,inherit);opacity:0;
+  transition:opacity .45s ease,transform .6s cubic-bezier(.2,.9,.25,1)}
+.ovl.o-in{opacity:1;transform:none!important}
+.ovl.o-pop{transform:scale(.55)}.ovl.o-from-l{transform:translateX(-120px)}.ovl.o-from-r{transform:translateX(120px)}
+.ovl.o-from-t{transform:translateY(-120px)}.ovl.o-from-b{transform:translateY(120px)}
+.ovl .o-t{font-family:var(--ovl-font,inherit);font-weight:700;line-height:1.08;overflow-wrap:anywhere}
+.ovl .o-l{opacity:.86;line-height:1.3;overflow-wrap:anywhere}
+.ovl .o-m{display:block;width:100%;height:auto}
+.ovl.o-bg-solid{background:#0C0E1E;border:1px solid rgba(255,255,255,.10)}
+.ovl.o-bg-glass{background:rgba(8,8,24,.70);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(12px)}
+.ovl.o-bg-none .o-t,.ovl.o-bg-none .o-l{text-shadow:0 2px 14px rgba(0,0,0,.75),0 0 2px rgba(0,0,0,.9)}
+.ovl.o-card{width:calc(var(--w)*1px);border-radius:14px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.ovl.o-card.bg-none{box-shadow:none}
+.ovl.o-card .o-m{max-height:calc(var(--w)*.75px);object-fit:cover}
+.ovl.o-card .o-b{padding:calc(var(--w)*.045px) calc(var(--w)*.055px);border-top:4px solid var(--a)}
+.ovl.o-card .o-t{font-size:calc(var(--w)*.066px)}.ovl.o-card .o-l{font-size:calc(var(--w)*.042px);margin-top:calc(var(--w)*.014px)}
+.ovl.o-banner{display:flex;align-items:center;gap:calc(var(--h)*.3px);height:calc(var(--h)*1px);border-radius:10px;overflow:hidden;
+  padding-right:calc(var(--h)*.4px);border-left:calc(var(--h)*.09px) solid var(--a)}
+.ovl.o-banner .o-m{width:auto;height:100%;flex:none}
+.ovl.o-banner .o-x{display:flex;align-items:baseline;gap:calc(var(--h)*.3px);min-width:0;padding-left:calc(var(--h)*.25px)}
+.ovl.o-banner .o-t{font-size:calc(var(--h)*.4px);white-space:nowrap}
+.ovl.o-banner .o-l{font-size:calc(var(--h)*.28px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ovl.o-media{width:calc(var(--w)*1px);border-radius:12px;overflow:hidden}
+.ovl.o-media.bg-none{border-radius:0}
+.ovl.o-text{text-align:center;padding:calc(var(--w)*.25px) calc(var(--w)*.45px);border-radius:14px}
+.ovl.o-text .o-t{font-size:calc(var(--w)*1px)}.ovl.o-text .o-l{font-size:calc(var(--w)*.5px);margin-top:calc(var(--w)*.12px)}
+.ovl.o-text .o-t{color:var(--a)}
+`;
+function ovlCss(doc=document){
+  if(doc.getElementById('ovl-css'))return;
+  const s=doc.createElement('style');s.id='ovl-css';s.textContent=OVL_CSS;doc.head.prepend(s);   /* vorne: Packs dürfen überschreiben */
+}
+/* Aufbau ohne Animation; Wrapper sitzt an der Position, das innere Element wird animiert */
+function ovlNode(o){
+  ovlCss();
+  const tpl=OVL_SIZE[o.template]?o.template:'card',sz=OVL_SIZE[tpl],m=Math.max(0,+o.margin||0);
+  const size=o.size==='custom'?Math.max(16,Math.min(1920,+o.width||sz.m)):(sz[o.size]||sz.m);
+  const pos=/^[tmb][lcr]$/.test(o.pos||'')?o.pos:'tc',row=pos[0],col=pos[1];
+  const wrap=document.createElement('div');wrap.className='ovl-pos';
+  const st=wrap.style,tf=[];
+  if(tpl==='banner'){st.left=m+'px';st.right=m+'px'}
+  else if(col==='l')st.left=m+'px';else if(col==='r')st.right=m+'px';else{st.left='50%';tf.push('translateX(-50%)')}
+  if(row==='t')st.top=m+'px';else if(row==='b')st.bottom=m+'px';else{st.top='50%';tf.push('translateY(-50%)')}
+  if(tf.length)st.transform=tf.join(' ');
+  const box=document.createElement('div');
+  const from=tpl==='banner'?(row==='b'?'b':'t'):col==='l'?'l':col==='r'?'r':row==='b'?'b':'t';
+  box.className=`ovl o-${tpl} o-bg-${['solid','glass','none'].includes(o.bg)?o.bg:'glass'} ${o.anim==='pop'?'o-pop':o.anim==='fade'?'':'o-from-'+from}`;
+  box.style.setProperty(tpl==='banner'?'--h':'--w',size);
+  if(/^#[0-9a-fA-F]{6}$/.test(o.color||''))box.style.setProperty('--a',o.color);
+  let media=null;
+  if(o.media&&tpl!=='text'){
+    media=document.createElement(o.video?'video':'img');media.className='o-m';media.src=o.media;
+    if(o.video){media.autoplay=true;media.loop=true;media.playsInline=true;media.muted=!!o.sound||!!o.mute}
+    else media.alt='';
+  }
+  const t=document.createElement('div');t.className='o-t';t.textContent=o.title||'';
+  const l=document.createElement('div');l.className='o-l';l.textContent=o.line||'';
+  if(tpl==='media'){if(media)box.append(media)}
+  else if(tpl==='banner'){if(media)box.append(media);const x=document.createElement('div');x.className='o-x';x.append(t);if(o.line)x.append(l);box.append(x)}
+  else if(tpl==='text'){box.append(t);if(o.line)box.append(l)}
+  else{if(media)box.append(media);const b=document.createElement('div');b.className='o-b';b.append(t);if(o.line)b.append(l);box.append(b)}
+  wrap.append(box);
+  return {wrap,box,media};
+}
+/* Ein-, Stehen-, Ausblenden. hold(ms) kann der Host ersetzen (Überspringen); volume = Gesamtlautstärke 0…1 */
+async function ovlPlay(o,root,{hold=null,volume=1}={}){
+  const n=ovlNode(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
+  root.append(n.wrap);
+  if(n.media&&n.media.play){n.media.volume=Math.max(0,Math.min(1,volume*(o.volume??100)/100));n.media.play().catch(()=>{})}
+  await pause(40);n.box.classList.add('o-in');
+  if(o.sound){const v=volume*(o.volume??100)/100;if(v>0){const a=new Audio(o.sound);a.volume=Math.min(1,v);a.play().catch(()=>{})}}
+  const ms=Math.max(1,Math.min(120,+o.secs||6))*1000;
+  await (hold?hold(ms):pause(ms));
+  n.box.classList.remove('o-in');await pause(650);n.wrap.remove();
+}
+/* In den Szenen: eigene Warteschlange neben den Alerts, hält bei „Pausieren“ an */
+const OQ=[];let ovlBusy=false;
+function ovlHost(o){
+  if(typeof ALERTS!=='undefined'&&!ALERTS)return;
+  if(o.template==='pack'){
+    pushAlert({type:o.event||'redeem',user:o.user||'',title:o.title,texts:[o.title||'',o.line||''],hold:Math.max(1,+o.secs||6)*1000,sound:o.sound||''});
+    return;
+  }
+  OQ.push(o);if(!ovlBusy)ovlNext();
+}
+async function ovlNext(){
+  if(!OQ.length){ovlBusy=false;return}ovlBusy=true;
+  while(STATE.paused)await new Promise(r=>setTimeout(r,300));
+  try{await ovlPlay(OQ.shift(),stage,{volume:(STATE.volume??70)/100})}catch(_){}
+  ovlNext();
+}
+
 
 async function poll(){
   if(!KEY){showNoKey();return}

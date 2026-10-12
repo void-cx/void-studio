@@ -26,6 +26,7 @@
 @font-face{font-family:"Space Grotesk";font-weight:400;src:url(data:font/woff2;base64,__SG4__) format("woff2");font-display:block}
 @font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
 :root{
+  --ovl-font:"Barlow Condensed"; --ovl-acc:var(--green);
   --carbon:#0A0A10; --panel:#12121B; --panel2:#1A1A26; --line:rgba(255,255,255,.10);
   --white:#F5F6FA; --mute:#8C8FA6;
   --purple:#B303F8;     /* VOID-Violett = schnellster Sektor */
@@ -324,7 +325,8 @@ function pause(){
   headline('Box, box','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines(),'Reifenwechsel läuft']);
   const b=put(stage,'pitboard');
   put(b,'pb-row y','Box');put(b,'pb-row','Pause');const t=put(b,'pb-row s','00:00');put(b,'pb-row p','VOID');
-  const t0=Date.now();setInterval(()=>t.textContent=mmss((Date.now()-t0)/1000|0),500);
+  /* mit Pausen-Timer aus VOID Studio: Restzeit statt Standzeit */
+  if(!pauseTimer(s=>t.textContent=s>0?mmss(s):'00:00')){const t0=Date.now();setInterval(()=>t.textContent=mmss((Date.now()-t0)/1000|0),500)}
   infos();
   const g=put(stage,'goals');g.style.cssText='position:absolute;right:170px;bottom:120px;width:520px';goalsInto(g);
   ticker('Standzeit',()=>['Enter The Void','Discord und Server: void.cx',...latestLines()]);
