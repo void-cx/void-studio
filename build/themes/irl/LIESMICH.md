@@ -5,8 +5,8 @@ Neun OBS-Szenen für Streams unterwegs, mit einer bis vier Kameras: Stream start
 ## Installation
 
 1. Einmalig VOID Studio einrichten: Python 3.11 oder 3.12 (64 Bit) installieren und in OBS unter Werkzeuge → Skripte → Python-Einstellungen eintragen. Dann `void-studio.py` aus dem neuesten Release unter Werkzeuge → Skripte → `+` hinzufügen.
-2. Im VOID-Studio-Fenster „IRL“ auswählen und „Pack installieren / aktualisieren“ klicken.
-3. „Pack-Ordner öffnen“, dann OBS → Szenensammlung → Importieren → `import.json` → Sammlung „VOID IRL“ aktivieren.
+2. Im VOID-Studio-Fenster „IRL“ auswählen und „Installieren / aktualisieren“ klicken. VOID Studio richtet die Szenensammlung dabei gleich in OBS ein.
+3. In OBS Szenensammlung → „VOID IRL“ wählen. Steht sie noch nicht im Menü, OBS einmal neu starten. (Alternativ: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
 4. Kameras einrichten (siehe unten).
 5. „Mit Twitch verbinden“ – nur einmal für alle Packs.
 
@@ -28,14 +28,18 @@ Lieber über einen Relay-Server, RTMP oder eine Kamera am Rechner? In OBS die Qu
 
 VOID Studio überwacht **Kamera 1**. Bricht das Signal in einer Kamera-Szene ab, schaltet es nach 3 Sekunden auf „Verbindung weg“; ist es wieder 5 Sekunden stabil da, geht es zurück in die Szene von vorher. Die Szene zeigt, seit wann das Signal weg ist, und meldet die Rückkehr. Einstellbar in VOID Studio unter „IRL“ (an/aus, überwachte Quelle, Sekunden). Mit dieser Sammlung ist es bereits an.
 
-## HUD und Parameter
+## Ort, Wetter und Kameranamen
 
-Die Kamera-Szenen haben ein schlankes HUD: LIVE, Uhrzeit, Ort, Wetter, Chat als Blasen unten links (verschwinden nach 25 Sekunden), Ziele unten rechts, Alerts als Pille oben. Parameter in den Dateien in `obs/` anhängen, z. B. `obs/solo.html#place=Hamburg&lat=53.54&lon=9.99`:
+In der Szene **„VOID · Infos“** stehen die Textquellen „Info · Ort“, „Info · Wetter-Ort“, „Info · Kamera 1“ bis „Info · Kamera 4“ sowie „Info · Titel“ und „Info · Statuszeilen“. Doppelklick, Text eintragen – das HUD übernimmt ihn sofort, auch unterwegs per Fernsteuerung von OBS. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; „Info · Wetter-Ort“ nimmt einen anderen Ort fürs Wetter.
+
+## HUD und feste Parameter
+
+Die Kamera-Szenen haben ein schlankes HUD: LIVE, Uhrzeit, Ort, Wetter, Chat als Blasen unten links (verschwinden nach 25 Sekunden), Ziele unten rechts, Alerts als Pille oben. Feste Einstellungen in den Dateien in `obs/` anhängen, z. B. `obs/solo.html#chatlife=40`:
 
 | Parameter | Wirkung |
 | --- | --- |
 | `place=Hamburg` | Ort im HUD |
-| `lat=53.54&lon=9.99` | Wetter von Open-Meteo, alle 10 Minuten (ohne Schlüssel) |
+| `lat=53.54&lon=9.99` | Wetter genau für diese Koordinaten statt nach Ortsnamen |
 | `cam1=Hauptkamera&cam2=Helm` | Namen an den Kameras in den Mehrkamera-Szenen |
 | `chatlife=40` | Sekunden, bis eine Chatnachricht verschwindet; `0` = bleibt |
 | `clock=0` / `hud=0` / `goals=0` | Uhr / ganzes HUD / Ziele ausblenden |

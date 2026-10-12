@@ -16,7 +16,8 @@
   ?scene=alerts    nur Alerts            ?scene=goals  nur Ziele        ?scene=stinger  Vorschau des Übergangs
 
   Für unterwegs:
-    &place=Hamburg%20·%20Speicherstadt   Ort im HUD          &lat=53.54&lon=9.99   Wetter von Open-Meteo (alle 10 Minuten)
+    &place=Hamburg%20·%20Speicherstadt   Ort im HUD; das Wetter (Open-Meteo, alle 10 Minuten) sucht den Ort bis zum „·“
+    &wx=Hamburg  Wetter für einen anderen Ort        &lat=53.54&lon=9.99   Wetter genau für diese Koordinaten
     &cam1=Hauptkamera&cam2=Helm …        Namen an den Kameras (Mehrkamera-Szenen)
     &chatlife=25                         Sekunden, bis eine Chatnachricht im HUD verschwindet (0 = bleibt)
     &hud=0                               nur Alerts, kein HUD     &clock=0  ohne Uhr
@@ -176,15 +177,19 @@ const WX=c=>c===0?'klar':c<=1?'überwiegend klar':c===2?'teils bewölkt':c===3?'
 const place=()=>P.get('place')||(TEST?'Hamburg · Speicherstadt':'');
 const clockText=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
 
-/* Wetter: nur mit &lat/&lon, Open-Meteo braucht keinen Schlüssel */
+/* Wetter von Open-Meteo (ohne Schlüssel): Standort aus &lat/&lon, sonst per Namen aus &wx oder dem Ort (bis zum „·“) */
 const WEATHER={text:'',hooks:[]};
 function weather(){
   const lat=parseFloat(P.get('lat')),lon=parseFloat(P.get('lon'));
-  if(TEST&&!(lat&&lon)){WEATHER.text='14 °C · teils bewölkt';return}
-  if(!(isFinite(lat)&&isFinite(lon))||P.get('lat')===null)return;
-  const load=()=>fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code`)
-    .then(r=>r.json()).then(j=>{const c=j.current||{};WEATHER.text=`${Math.round(c.temperature_2m)} °C · ${WX(c.weather_code)}`;WEATHER.hooks.forEach(f=>f())}).catch(()=>{});
-  load();setInterval(load,600000);
+  const name=(P.get('wx')||(P.get('place')||'').split('·')[0]).trim();
+  if(TEST&&!(isFinite(lat)&&isFinite(lon))&&!P.get('wx')){WEATHER.text='14 °C · teils bewölkt';return}
+  const at=isFinite(lat)&&isFinite(lon)?Promise.resolve([lat,lon])
+    :name?fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&language=de&name=${encodeURIComponent(name)}`).then(r=>r.json())
+      .then(j=>j.results&&j.results[0]?[j.results[0].latitude,j.results[0].longitude]:null):Promise.resolve(null);
+  at.then(pos=>{if(!pos)return;
+    const load=()=>fetch(`https://api.open-meteo.com/v1/forecast?latitude=${pos[0]}&longitude=${pos[1]}&current=temperature_2m,weather_code`)
+      .then(r=>r.json()).then(j=>{const c=j.current||{};WEATHER.text=`${Math.round(c.temperature_2m)} °C · ${WX(c.weather_code)}`;WEATHER.hooks.forEach(f=>f())}).catch(()=>{});
+    load();setInterval(load,600000)}).catch(()=>{});
 }
 weather();
 

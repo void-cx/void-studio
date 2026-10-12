@@ -8,6 +8,7 @@
   "layout": "game",
   "cam": [1472, 814],
   "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Splash"],
   "fonts": {
     "__PX5__": ["pixelify-sans-500.woff2", "fontsource-pixelify-sans/files/pixelify-sans-latin-500-normal.woff2"],
     "__PX7__": ["pixelify-sans-700.woff2", "fontsource-pixelify-sans/files/pixelify-sans-latin-700-normal.woff2"],

@@ -8,6 +8,7 @@
   "layout": "game",
   "cam": [1472, 330],
   "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Charakter"],
   "fonts": {
     "__AN4__": ["anton-400.woff2", "fontsource-anton/files/anton-latin-400-normal.woff2"],
     "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"],

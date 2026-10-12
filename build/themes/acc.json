@@ -8,6 +8,7 @@
   "layout": "game",
   "cam": [1472, 330],
   "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Strecke", "Auto", "Serie"],
   "param_example": "#track=Spa-Francorchamps&car=BMW%20M4%20GT3",
   "fonts": {
     "__BC5__": ["barlow-condensed-500.woff2", "fontsource-barlow-condensed-5.3.0/files/barlow-condensed-latin-500-normal.woff2"],

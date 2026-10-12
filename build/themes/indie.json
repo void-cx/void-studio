@@ -10,6 +10,7 @@
   "layout": "game",
   "cam": [1464, 770],
   "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Spiel", "Entwickler", "Status", "Wunschliste", "Spiele des Abends"],
   "param_example": "#game=Pixel%20Pilgrim&dev=Studio%20Kiesel&status=Demo&wish=1",
   "fonts": {
     "__PX5__": ["pixelify-sans-500.woff2", "fontsource-pixelify-sans/files/pixelify-sans-latin-500-normal.woff2"],

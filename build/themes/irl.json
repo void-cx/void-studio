@@ -8,6 +8,7 @@
   "core": true,
   "layout": "irl",
   "scenes": ["start", "solo", "duo", "pip", "quad", "chat", "pause", "signal", "end"],
+  "infos": ["Ort", "Wetter-Ort", "Kamera 1", "Kamera 2", "Kamera 3", "Kamera 4"],
   "param_example": "#place=Hamburg&lat=53.54&lon=9.99&cam1=Hauptkamera",
   "script_settings": {
     "irl_auto": true

@@ -25,6 +25,7 @@ def text(t):
     gn = t['game']
     coll = t.get('collname', f'VOID × {gn}')
     cap = t.get('capname', f'{gn} Spielaufnahme')
+    infos = ', '.join(f'„Info · {x}“' for x in ['Titel', 'Statuszeilen'] + t.get('infos', []))
     logo = r.get('logo', 'Start, Pause und Ende bauen die Bildmarke beim Szenenwechsel auf. Bei Raids, ab 5 Geschenk-Abos und ab 1.000 Bits auch im Alert.')
     out = f"""# VOID Szenen-Pack: {g}
 
@@ -33,12 +34,16 @@ def text(t):
 ## Installation
 
 1. Einmalig VOID Studio einrichten: Python 3.11 oder 3.12 (64 Bit) installieren und in OBS unter Werkzeuge → Skripte → Python-Einstellungen eintragen. Dann `void-studio.py` aus dem neuesten Release unter Werkzeuge → Skripte → `+` hinzufügen.
-2. Im VOID-Studio-Fenster „{g}“ auswählen und „Pack installieren / aktualisieren“ klicken.
-3. „Pack-Ordner öffnen“, dann OBS → Szenensammlung → Importieren → `import.json` → Sammlung „{coll}“ aktivieren.
+2. Im VOID-Studio-Fenster „{g}“ auswählen und „Installieren / aktualisieren“ klicken. VOID Studio richtet die Szenensammlung dabei gleich in OBS ein.
+3. In OBS Szenensammlung → „{coll}“ wählen. Steht sie noch nicht im Menü, OBS einmal neu starten. (Alternativ wie bisher: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
 4. Kamera-Gerät und bei „{cap}“ das Spielfenster wählen.
 5. „Mit Twitch verbinden“ – nur einmal für alle Packs.
 
-Updates: „Nach Updates suchen“ und „Alle Pack-Updates installieren“. Die Szenen übernehmen neue Versionen sofort; nur wenn sich die Szenen selbst ändern, meldet VOID Studio, dass `import.json` neu importiert werden muss.
+Updates: „Nach Updates suchen“ und „Alle Pack-Updates installieren“. Die Szenen übernehmen neue Versionen sofort; nur wenn sich die Szenen selbst ändern, meldet VOID Studio das. Dann kurz eine andere Szenensammlung wählen und „In OBS einrichten“ klicken – Kamera, Spielaufnahme und eigene Quellen bleiben erhalten.
+
+## Texte anpassen
+
+In der Sammlung gibt es die Szene **„VOID · Infos“** mit Textquellen wie {infos}. Doppelklick auf eine Quelle, Text eintragen – die Overlays übernehmen ihn sofort. Leer heißt Standard, mehrere Zeilen werden zu wechselnden Zeilen bzw. einer Liste. Die Szene selbst nicht live zeigen.
 
 ## Inhalt
 
@@ -47,7 +52,7 @@ Updates: „Nach Updates suchen“ und „Alle Pack-Updates installieren“. Die
 | `import.json` | Die Datei für OBS (Szenensammlung → Importieren). Erzeugt VOID Studio beim Installieren mit den Pfaden deines Rechners |
 | `_vorlage/import.template.json` | Vorlage dafür; nicht in OBS importieren. VOID Studio braucht sie, um `import.json` neu zu erzeugen |
 | `pack.json` | Name, Version und Szenen-Fingerabdruck für Updates |
-| `obs/` | Einstiegsdateien der Browserquellen. Parameter hier anhängen, z. B. `#scene=game&cam=bl` |
+| `obs/` | Einstiegsdateien der Browserquellen. Feste Parameter hier anhängen, z. B. `#scene=game&cam=bl` |
 | `scenes.html` | Alle Szenen. Im Browser testen: `scenes.html?scene=start&test=1&demo=1` |
 | `assets/transition.webm` | Szenenübergang: 1,95 s, transparent, Umschaltpunkt 600 ms |
 | `assets/` | Schriften mit Lizenzen, VOID-Bildmarke, Lockup |

@@ -106,6 +106,7 @@ document.head.prepend(el('style','',`
      {type:'state', paused, volume, sounds, latest, session, goals, counts, show_latest, latest_items}
      {type:'chat', id, uid, user, color, badges, frags} · chat_delete · chat_delete_user · chat_clear
      {type:'badges', map} · {type:'control', action:'skip'} · {type:'telemetry', data} · {type:'irl', live, since}
+     {type:'info', data:{Label: Text}} – Textquellen „Info · …“ aus OBS
    ========================================================= */
 let STATE={paused:false,volume:70,sounds:{},latest:{},session:null,goals:[],counts:{}};
 let BADGES={};
@@ -263,6 +264,29 @@ function addChat(c){
 }
 function chatRemove(sel){chatLogs.forEach(L=>L.box.querySelectorAll(sel).forEach(n=>n.classList.add('gone')))}
 
+/* ---------- Infos aus OBS: Szene „VOID · Infos“, Textquellen „Info · …“ (VOID Studio schickt sie) ----------
+   Ein Wert ersetzt den gleichnamigen Parameter der Einstiegsdatei; die Szene lädt dafür einmal neu (nach einem
+   laufenden Alert). Leerer Text = Parameter bzw. Standard. Mehrere Zeilen werden zu A|B|C. */
+const INFO_KEYS={'Titel':'title','Statuszeilen':'sub','Charakter':'char','Spiel':'game','Entwickler':'dev','Status':'status',
+  'Wunschliste':'wish','Spiele des Abends':'games','Strecke':'track','Auto':'car','Serie':'series','Ort':'place','Wetter-Ort':'wx',
+  'Splash':'splash','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
+function applyInfo(d){
+  const want={};
+  Object.entries(d||{}).forEach(([label,raw])=>{const k=INFO_KEYS[label];if(!k)return;
+    let v=String(raw||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean).join('|');
+    if(k==='wish'&&v)v=/^(ja|an|1|x|yes|true)$/i.test(v)?'1':'0';
+    if(v)want[k]=v});
+  const h=new URLSearchParams(location.hash.slice(1)),had=(h.get('_info')||'').split(',').filter(Boolean);
+  let changed=false;
+  had.forEach(k=>{if(!(k in want)){h.delete(k);changed=true}});
+  Object.entries(want).forEach(([k,v])=>{if(h.get(k)!==v){h.set(k,v);changed=true}});
+  const keys=Object.keys(want).sort().join(',');
+  if(keys)h.set('_info',keys);else h.delete('_info');
+  if(!changed)return;
+  const go=()=>{if(busy)return setTimeout(go,500);history.replaceState(null,'','#'+h.toString());location.reload()};
+  go();
+}
+
 /* ---------- Verbindung zur Bridge ---------- */
 function onMessage(e){
   switch(e.type){
@@ -275,6 +299,7 @@ function onMessage(e){
     case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
     case 'telemetry':hooks.tele.forEach(f=>f(e.data));break;
     case 'irl':hooks.irl.forEach(f=>f(e));break;
+    case 'info':applyInfo(e.data);break;
     default:pushAlert(e);
   }
 }

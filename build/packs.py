@@ -104,7 +104,9 @@ for cfg in themes.load(ONLY):
     # Vorlage im Unterordner: oben im Pack liegt nach der Installation nur import.json, die Datei für OBS
     os.makedirs(d+'/_vorlage',exist_ok=True); json.dump(coll,open(d+'/_vorlage/import.template.json','w',encoding='utf-8'),ensure_ascii=False,indent=4)
     sig=[(s['name'],[i['name'] for i in s['settings']['items']]) for s in coll['sources'] if s['id']=='scene']
-    json.dump({'id':key,'name':cfg['label'],'version':VER[key],'structure':hashlib.sha1(json.dumps(sig).encode()).hexdigest()[:10]},
+    # infos: Textquellen „Info · …“, die VOID Studio in der Szene „VOID · Infos“ anlegt
+    json.dump({'id':key,'name':cfg['label'],'version':VER[key],'structure':hashlib.sha1(json.dumps(sig).encode()).hexdigest()[:10],
+               'infos':['Titel','Statuszeilen']+cfg.get('infos',[])},
               open(d+'/pack.json','w',encoding='utf-8'),ensure_ascii=False,indent=2)
     os.makedirs(d+'/obs',exist_ok=True)
     for sc in cfg['scenes']:
