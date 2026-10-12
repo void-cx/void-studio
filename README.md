@@ -8,13 +8,15 @@ OBS-Szenen-Packs für Enter The Void plus **VOID Studio** – ein OBS-Skript, da
 2. `void-studio.py` aus dem [neuesten Release](../../releases/latest) laden und unter Werkzeuge → Skripte → `+` hinzufügen.
 3. Im Skript-Fenster Pack wählen → „Pack installieren“ → „Pack-Ordner öffnen“ → OBS: Szenensammlung → Importieren → `import.json`.
 4. „Mit Twitch verbinden“ – einmal für alle Packs.
-5. Optional: im Portal unter Konto → Login Twitch verknüpfen. Dann zeigt [my.void.cx/studio](https://my.void.cx/studio) deine Stream-Statistiken, und der Discord kann deinen Go-Live ankündigen.
+5. Bequemer: VOID Studio hat eine Web-Oberfläche für Infos, Alerts, Ziele, Packs und Einstellungen – im Skript-Fenster „Im Browser öffnen“, oder die angezeigte Adresse als Dock eintragen (Docks → Benutzerdefinierte Browser-Docks).
+6. Optional: im Portal unter Konto → Login Twitch verknüpfen. Dann zeigt [my.void.cx/studio](https://my.void.cx/studio) deine Stream-Statistiken, und der Discord kann deinen Go-Live ankündigen.
 
 ## Für Entwickler
 
 | Pfad | Inhalt |
 | --- | --- |
 | `studio/void-studio.py` | VOID Studio (Pack-Manager + Bridge) |
+| `studio/web.html` | Web-Oberfläche von VOID Studio (`/studio`); wird mit `build/embed_web.py` in `void-studio.py` eingebettet, die CI prüft das |
 | `build/themes/<id>.json` | eine Beschreibung pro Pack: Name, Template, Szenen, Kamera, Schriften, Vorschauen, LIESMICH-Texte (Felder in `build/themes.py`) |
 | `build/themes/<id>/scenes.html` | eigenes Template eines Packs (Assetto Corsa, Indie, IRL); `/*@CORE@*/` wird durch `build/core/core.js` ersetzt |
 | `build/core/core.js` | gemeinsamer Kern für eigene Templates: Bridge, Alert-Warteschlange, Chat, Ziele, Rückblick, Testdaten, Bildmarke |

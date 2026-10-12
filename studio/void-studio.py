@@ -7,6 +7,7 @@ Eins für alles:
   · IRL: bei Verbindungsabbruch selbst auf „Verbindung weg“ schalten und zurück
   · Infos aus OBS: Textquellen „Info · …“ in der Szene „VOID · Infos“ füllen die Overlays (Spielname, Ort, …)
   · Szenensammlung direkt in OBS einrichten, ohne Import-Dialog
+  · Web-Oberfläche unter http://127.0.0.1:8787/studio (auch als OBS-Dock und auf Wunsch vom Handy im Heimnetz)
 
 Erster Start: Dieses Skript einmal in OBS hinzufügen. Es kopiert sich nach %APPDATA%/VOID-Bridge/void-studio.py;
 alle über VOID Studio installierten Szenensammlungen nutzen genau diese eine Kopie.
@@ -26,7 +27,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.5"
+STUDIO_VERSION = "1.1.0"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,7 +49,9 @@ ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
-       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5}
+       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
+       "remote_on": False}
+web = {"key": None, "log": collections.deque(maxlen=40), "device": None}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
 gen = [0]
@@ -62,6 +65,7 @@ lock = threading.RLock()
 
 def log(msg):
     print(f"[VOID Studio] {msg}")
+    web["log"].append([time.strftime("%H:%M:%S"), str(msg)])
 
 
 # ---------------------------------------------------------------- Zustand: Letzte, Session, Ziele
@@ -388,6 +392,199 @@ def ctl_reset_bits(*_):
     return False
 
 
+# ---------------------------------------------------------------- Web-Oberfläche (/studio, auch als OBS-Dock)
+# Die Seite selbst enthält nichts Geheimes; jede /api-Anfrage braucht den Schlüssel im Header X-Void-Key. Fremde
+# Webseiten kennen ihn nicht und dürfen den Header ohne CORS-Freigabe gar nicht senden.
+# Regel seit 1.0.4: Diese Anfragen laufen in Server-Threads und dürfen OBS nie auf die Oberfläche warten lassen.
+# Texte für die Info-Quellen gehen darum in eine Warteschlange, die info_tick im OBS-Takt abarbeitet; Szenen anlegen
+# geht nur aus OBS heraus.
+WEB_KEY_FILE = os.path.join(DATA_DIR, "web-key.txt")
+info_writes = queue.Queue()
+INFO_HELP = {
+    "Titel": "Großer Titel in den Szenen. Leer = Standard des Packs.",
+    "Statuszeilen": "Eine Zeile pro Text, sie wechseln sich ab. Ersetzt die Standardzeilen.",
+    "Charakter": "Name deines Charakters, erscheint im Wechsel auf der Namensplatte.",
+    "Splash": "Gelber Spruch am Titel.",
+    "Spiel": "Name des Spiels auf dem Notizzettel.",
+    "Entwickler": "Studio oder Entwickler, erscheint als „von …“.",
+    "Status": "Wird zum Sticker, z. B. Demo, Early Access, Prototyp.",
+    "Wunschliste": "„ja“ klebt „Auf die Wunschliste!“ daneben.",
+    "Spiele des Abends": "Ein Spiel pro Zeile, Status nach Doppelpunkt, z. B. „Pixel Pilgrim: Demo“.",
+    "Strecke": "Infotafel in Start und Pause.",
+    "Auto": "Infotafel in Start und Pause.",
+    "Serie": "Infotafel in Start und Pause.",
+    "Ort": "Steht im HUD; das Wetter sucht den Ort bis zum „·“.",
+    "Wetter-Ort": "Anderer Ort fürs Wetter. Leer = Ort.",
+}
+MULTILINE = ("Statuszeilen", "Spiele des Abends")
+BOOL_SETTINGS = ("show_latest", "hide_cmd", "irl_auto", "tele_on", "remote_on")
+INT_SETTINGS = {"volume": (0, 100), "goal_follow": (0, 10000000), "goal_sub": (0, 1000000), "goal_bits": (0, 100000000),
+                "irl_delay": (1, 60), "irl_back": (1, 60)}
+STR_SETTINGS = ("irl_source", "tele_url")
+
+
+def web_key(renew=False):
+    if renew or not web["key"]:
+        k = None
+        if not renew:
+            try:
+                with open(WEB_KEY_FILE, encoding="utf-8") as f:
+                    k = f.read().strip()
+            except OSError:
+                pass
+        if not k:
+            import secrets
+            k = secrets.token_urlsafe(18)
+            os.makedirs(DATA_DIR, exist_ok=True)
+            with open(WEB_KEY_FILE, "w", encoding="utf-8") as f:
+                f.write(k)
+        web["key"] = k
+    return web["key"]
+
+
+def lan_addresses():
+    """IPv4-Adressen dieses Rechners im Heimnetz bzw. VPN (z. B. Tailscale)."""
+    ips = set()
+    try:
+        for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
+            ips.add(a[4][0])
+    except OSError:
+        pass
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as u:
+            u.connect(("192.0.2.1", 9))                 # sendet nichts, ermittelt nur die Standard-Adresse
+            ips.add(u.getsockname()[0])
+    except OSError:
+        pass
+    return sorted(ip for ip in ips if not ip.startswith(("127.", "169.254.")))
+
+
+def web_urls():
+    k, p = web_key(), cfg["port"]
+    return f"http://127.0.0.1:{p}/studio#k={k}", [f"http://{ip}:{p}/studio#k={k}" for ip in lan_addresses()] if cfg["remote_on"] else []
+
+
+def preview_url(p):
+    prev = p.get("previews") or []
+    pick = next((x for x in prev if x.get("scene") == "game"), prev[0] if prev else None)
+    return src_url(pick["file"]) if pick else None
+
+
+def info_labels():
+    pid = active_pack()
+    return pid, ((installed(pid) or {}).get("infos") or INFO_DEFAULT) if pid else []
+
+
+def web_state():
+    pid, labels = info_labels()
+    with lock:
+        live = {"paused": state["paused"], "session": state["session"], "followers": state["followers"],
+                "subs": state["subs"], "latest": state["latest"], "bits_goal": state["bits_goal"]}
+    s = (mgr["index"] or {}).get("studio") or {}
+    local, remote = web_urls()
+    return {
+        "version": STUDIO_VERSION,
+        "studio_update": s.get("version") if s and ver(s.get("version", 0)) > ver(STUDIO_VERSION) else None,
+        "studio_changelog": s.get("changelog", []),
+        "collection": obs.obs_frontend_get_current_scene_collection(),
+        "pack": {"id": pid, "name": (installed(pid) or {}).get("name", pid)} if pid else None,
+        "infos": [{"label": lb, "value": info["data"].get(lb, ""), "exists": lb in info["data"], "help": INFO_HELP.get(lb, ""),
+                   "multiline": lb in MULTILINE} for lb in labels],
+        "twitch": {"login": twitch_state["login"], "connected": current_ws[0] is not None, "saved": bool(load_token()),
+                   "device": web["device"], "status": twitch_status()},
+        "live": dict(live, volume=cfg["volume"], goals=snapshot()["goals"]),
+        "irl": {"auto": cfg["irl_auto"], "source": cfg["irl_source"], "live": irl["live"], "since": irl["since"]},
+        "packs": [{"id": p["id"], "name": p["name"], "version": p.get("version"),
+                   "installed": (p.get("installed") or {}).get("version"), "status": status_of(p), "preview": preview_url(p)}
+                  for p in pack_list()],
+        "busy": mgr["busy"], "error": mgr["error"], "notes": mgr["notes"][-3:],
+        "log": list(web["log"])[-15:],
+        "settings": dict({k: cfg[k] for k in BOOL_SETTINGS + tuple(INT_SETTINGS) + STR_SETTINGS},
+                         latest_items=cfg["latest_items"], ignore=", ".join(sorted(cfg["ignore"]))),
+        "local_url": local, "remote_urls": remote, "port": cfg["port"],
+    }
+
+
+def web_infos(body):
+    """{Label: Text} → Warteschlange; info_tick schreibt die Texte im OBS-Takt in die Quellen."""
+    _, labels = info_labels()
+    for label, text in body.items():
+        if label in labels:
+            info_writes.put((label, str(text if text is not None else "")[:2000]))
+
+
+def apply_info_writes():
+    """Im OBS-Takt: Texte in die Quellen „Info · …“ schreiben (nur libobs, keine Oberfläche)."""
+    while True:
+        try:
+            label, text = info_writes.get_nowait()
+        except queue.Empty:
+            return
+        src = obs.obs_get_source_by_name(INFO_PREFIX + label)
+        if not src:
+            log(f"Infos: Quelle „{INFO_PREFIX}{label}“ fehlt – in OBS unter VOID Studio „Infos-Szene anlegen“.")
+            continue
+        st = obs.obs_data_create()
+        try:
+            obs.obs_data_set_string(st, "text", text)
+            obs.obs_source_update(src, st)
+        finally:
+            obs.obs_data_release(st)
+            obs.obs_source_release(src)
+
+
+def web_settings(body):
+    st = settings_ref[0]
+    if st is None:
+        raise RuntimeError("Einstellungen noch nicht geladen")
+    for k, v in body.items():
+        if k in BOOL_SETTINGS:
+            obs.obs_data_set_bool(st, k, bool(v))
+        elif k in INT_SETTINGS:
+            lo, hi = INT_SETTINGS[k]
+            obs.obs_data_set_int(st, k, max(lo, min(hi, int(v))))
+        elif k in STR_SETTINGS:
+            obs.obs_data_set_string(st, k, str(v)[:300])
+        elif k == "ignore":
+            obs.obs_data_set_string(st, "ignore", str(v)[:2000])
+        elif k == "latest_items":
+            for key in LATEST_KEYS:
+                obs.obs_data_set_bool(st, "latest_" + key, key in (v or []))
+    script_update(st, defer_restart=True)
+
+
+def web_control(action, pid=None, local=False):
+    """Knöpfe der Oberfläche. Langsame Sachen (Downloads) laufen im Hintergrund, die Seite zeigt den Fortschritt."""
+    simple = {"replay": ctl_replay, "pause": ctl_pause, "skip": ctl_skip, "reset_session": ctl_reset_session,
+              "reset_bits": ctl_reset_bits, "test_chat": test_chat}
+    if action in simple:
+        simple[action]()
+    elif action.startswith("test_") and action[5:] in SAMPLES:
+        alert(dict(SAMPLES[action[5:]]), count=False)
+    elif action == "twitch_login":
+        threading.Thread(target=device_login, args=(local,), daemon=True).start()
+    elif action == "twitch_logout":
+        on_logout(None, None)
+    elif action == "check":
+        in_thread(check_updates)
+    elif action == "install" and pid:
+        in_thread(install_pack, str(pid))
+    elif action == "install_all":
+        in_thread(lambda: [install_pack(p["id"]) for p in pack_list() if p.get("installed") and status_of(p).startswith("Update")])
+    elif action == "setup" and pid:
+        return setup_collection(str(pid)) and mgr["notes"][-1]
+    elif action == "remove" and pid:
+        remove_pack(str(pid))
+    elif action == "studio_update":
+        in_thread(update_studio)
+    elif action == "renew_key":
+        web_key(renew=True)
+        log("Neuer Schlüssel für die Oberfläche: alte Links und Docks funktionieren nicht mehr.")
+    else:
+        raise ValueError(f"unbekannte Aktion: {action}")
+    return None
+
+
 # ---------------------------------------------------------------- Lokaler Server für die Szenen
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -398,6 +595,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Private-Network", "true")   # file:// → localhost
 
     def do_OPTIONS(self):
+        if self.path.startswith("/api/"):                 # keine CORS-Freigabe für die Steuerung
+            return self.reply(403, b"", "text/plain", cors=False)
         self.send_response(204)
         self.cors()
         self.send_header("Access-Control-Allow-Methods", "GET")
@@ -408,7 +607,17 @@ class Handler(BaseHTTPRequestHandler):
         path = urllib.parse.urlsplit(self.path).path
         if path == "/events":
             return self.sse()
+        if path == "/studio":
+            return self.reply(200, WEB_HTML.encode("utf-8"), "text/html; charset=utf-8", cors=False)
+        if path.startswith("/api/"):
+            if not self.authorized():
+                return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
+            if path == "/api/state":
+                return self.json(200, web_state())
+            return self.json(404, {"error": "unbekannt"})
         if path.startswith("/test/"):
+            if self.client_address[0] != "127.0.0.1" and not self.authorized():
+                return self.reply(403, b"nur lokal", "text/plain")
             sample = SAMPLES.get(path[6:])
             if sample:
                 alert(dict(sample), count=False)
@@ -429,14 +638,48 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(200, body, "application/json")
         self.reply(404, b"nicht gefunden", "text/plain")
 
-    def reply(self, code, body, ctype):
+    def reply(self, code, body, ctype, cors=True):
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.cors()
+        if cors:
+            self.cors()
         self.end_headers()
         self.wfile.write(body)
+
+    def json(self, code, obj):
+        self.reply(code, json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", cors=False)
+
+    def authorized(self):
+        import hmac
+        return hmac.compare_digest(self.headers.get("X-Void-Key", ""), web_key())
+
+    def do_POST(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if not path.startswith("/api/") or not self.authorized():
+            return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.loads(self.rfile.read(n).decode("utf-8") if 0 < n <= 65536 else "{}")
+            if not isinstance(body, dict):
+                raise ValueError("JSON-Objekt erwartet")
+        except ValueError as e:
+            return self.json(400, {"error": str(e)})
+        try:
+            if path == "/api/infos":
+                web_infos(body)
+            elif path == "/api/settings":
+                web_settings(body)
+            elif path == "/api/control":
+                msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1")
+                return self.json(200, {"ok": True, "message": msg, "state": web_state()})
+            else:
+                return self.json(404, {"error": "unbekannt"})
+        except Exception as e:
+            log(f"Oberfläche: {e}")
+            return self.json(500, {"error": str(e)})
+        self.json(200, {"ok": True, "state": web_state()})
 
     def sse(self):
         self.send_response(200)
@@ -474,14 +717,15 @@ class Handler(BaseHTTPRequestHandler):
 def start_server():
     stop_server()
     try:
-        srv = ThreadingHTTPServer(("127.0.0.1", cfg["port"]), Handler)
+        srv = ThreadingHTTPServer(("0.0.0.0" if cfg["remote_on"] else "127.0.0.1", cfg["port"]), Handler)
     except OSError as e:
         log(f"Port {cfg['port']} nicht verfügbar: {e}")
         return
     srv.daemon_threads = True
     server[0] = srv
     threading.Thread(target=srv.serve_forever, daemon=True).start()
-    log(f"Event-Host läuft: http://127.0.0.1:{cfg['port']}/events")
+    log(f"Event-Host läuft: http://127.0.0.1:{cfg['port']}/events · Oberfläche: http://127.0.0.1:{cfg['port']}/studio"
+        + (" · auch im Heimnetz erreichbar" if cfg["remote_on"] else ""))
 
 
 def stop_server():
@@ -560,15 +804,24 @@ def session():
         return None
 
 
-def device_login():
+def device_login(open_browser=True):
+    try:
+        _device_login(open_browser)
+    finally:
+        web["device"] = None
+
+
+def _device_login(open_browser):
     st, j = http("POST", "https://id.twitch.tv/oauth2/device",
                  {"client_id": cfg["client_id"], "scopes": SCOPES}, form=True)
     if st != 200:
         log(f"Login nicht möglich ({st}): {j.get('message', '')} – ist die App als „Öffentlich“ registriert?")
         return
     log(f"Im Browser bestätigen. Code: {j['user_code']}  ·  {j['verification_uri']}")
-    webbrowser.open(j["verification_uri"])
     interval, deadline = j.get("interval", 5), time.time() + j.get("expires_in", 1800)
+    web["device"] = {"code": j["user_code"], "url": j["verification_uri"], "until": int(deadline)}
+    if open_browser:
+        webbrowser.open(j["verification_uri"])
     while time.time() < deadline and not stop.is_set():
         time.sleep(interval)
         st, t = http("POST", "https://id.twitch.tv/oauth2/token", {
@@ -1114,6 +1367,7 @@ def info_tick():
     """Texte der Info-Quellen lesen; bei einer Änderung an alle Szenen schicken. Nur lesen: läuft im Grafik-Thread
     (siehe IRL oben), Szenen oder Quellen anlegen darf hier nie passieren."""
     try:
+        apply_info_writes()
         data = {}
         def read(src):
             n = obs.obs_source_get_name(src) or ""
@@ -1408,6 +1662,11 @@ HOTKEYS = [("replay", "VOID: Letzten Alert wiederholen", ctl_replay),
 hotkey_ids = {}
 
 
+def ui_web(*_):
+    webbrowser.open(web_urls()[0])
+    return False
+
+
 def ui_portal(*_):
     webbrowser.open(PORTAL_STUDIO)
     return False
@@ -1528,6 +1787,19 @@ def script_properties():
                 "Die Packs nutzen sie ohnehin."), INFO)
             obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
+    def webui(g):
+        local, remote = web_urls()
+        if settings_ref[0] is not None:
+            obs.obs_data_set_string(settings_ref[0], "web_url", local)
+        tip(obs.obs_properties_add_text(g, "web_url", "Adresse", obs.OBS_TEXT_DEFAULT),
+            "Zum Kopieren. Als Dock: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse.")
+        obs.obs_properties_add_button(g, "w_open", "Im Browser öffnen", ui_web)
+        tip(obs.obs_properties_add_bool(g, "remote_on", "Auch im Heimnetz erreichbar (Handy, Tablet)"),
+            "Andere Geräte im selben Netz oder per VPN (z. B. Tailscale) öffnen die Oberfläche mit Schlüssel. "
+            "Den Link zeigt die Oberfläche unter Einstellungen.")
+        if remote:
+            obs.obs_properties_add_text(g, "w_remote", "Im Heimnetz: " + "  ·  ".join(remote), INFO)
+
     def twitch(g):
         obs.obs_properties_add_text(g, "twitch_status", twitch_status(), INFO)
         tip(obs.obs_properties_add_button(g, "login", "Mit Twitch verbinden", on_login),
@@ -1591,6 +1863,8 @@ def script_properties():
     group(p, "g_packs", "Szenen-Packs",
           "Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Texte wie Spielname oder Ort "
           "trägst du in OBS in der Szene „VOID · Infos“ ein.", packs)
+    group(p, "g_web", "Web-Oberfläche",
+          "Alles aus diesem Fenster und die Infos (Spielname, Ort …) übersichtlich im Browser oder als Dock in OBS.", webui)
     group(p, "g_twitch", "Twitch", None, twitch)
     group(p, "g_alerts", "Alerts",
           "Einblendung mit Sound bei Follow, Abo, Bits, Raid und Kanalpunkten. Eigene Sounds: " + SOUND_DIR, alerts)
@@ -1621,14 +1895,16 @@ def on_logout(props, prop):
     return False
 
 
-def script_update(settings):
+def script_update(settings, defer_restart=False):
+    """defer_restart: aus einer Anfrage der Oberfläche – den Server erst nach der Antwort neu starten."""
     settings_ref[0] = settings
     cfg["repo"] = obs.obs_data_get_string(settings, "repo").strip() or DEFAULT_REPO
     g = lambda k: obs.obs_data_get_int(settings, k)
     port = g("port")
-    port_changed = port != cfg["port"] or server[0] is None
+    remote = obs.obs_data_get_bool(settings, "remote_on")
+    port_changed = port != cfg["port"] or remote != cfg["remote_on"] or server[0] is None
     first = started[0] is None
-    cfg.update(port=port, volume=g("volume"), goal_follow=g("goal_follow"),
+    cfg.update(port=port, remote_on=remote, volume=g("volume"), goal_follow=g("goal_follow"),
                goal_sub=g("goal_sub"), goal_bits=g("goal_bits"),
                hide_cmd=obs.obs_data_get_bool(settings, "hide_cmd"),
                tele_on=obs.obs_data_get_bool(settings, "tele_on"),
@@ -1639,7 +1915,9 @@ def script_update(settings):
                irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
                irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
                ignore={n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()})
-    if port_changed:
+    if port_changed and defer_restart:
+        threading.Timer(0.5, start_server).start()
+    elif port_changed:
         start_server()
     if first:                            # Twitch-Verbindung einmal beim Laden starten
         started[0] = True
@@ -1693,3 +1971,388 @@ def script_unload():
     stop_eventsub()
     stop_server()
     save_state()
+
+
+# ---------------------------------------------------------------- Web-Oberfläche (aus studio/web.html, build/embed_web.py)
+WEB_HTML = r"""<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>VOID Studio</title>
+<style>
+:root{--bg:#07071A;--panel:#0F0F26;--panel2:#16163A;--line:rgba(255,255,255,.09);--text:#F2F3FA;--mute:#A3A6C2;
+  --violet:#B303F8;--blue:#1141E4;--lilac:#D27BFF;--sky:#7C9BFF;--green:#3BE39A;--red:#FF5468;--yellow:#FFD45C}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+body{min-height:100vh;background:radial-gradient(800px 500px at 0% 0%,rgba(179,3,248,.16),transparent 70%),radial-gradient(800px 600px at 100% 100%,rgba(17,65,228,.18),transparent 70%),var(--bg);background-attachment:fixed}
+a{color:var(--sky)}
+header{position:sticky;top:0;z-index:5;background:rgba(7,7,26,.88);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;gap:12px;padding:12px 16px 8px;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:.01em}
+.logo i{width:26px;height:26px;border-radius:8px;background:linear-gradient(135deg,var(--violet),var(--blue));display:inline-block}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-left:auto}
+.chip{font-size:12px;padding:3px 10px;border-radius:12px;background:var(--panel2);color:var(--mute);white-space:nowrap}
+.chip.ok{color:#0b2a1d;background:var(--green)}.chip.warn{color:#2a1f00;background:var(--yellow)}.chip.bad{color:#fff;background:var(--red)}
+nav{display:flex;gap:2px;padding:0 10px;overflow-x:auto}
+nav button{flex:1;min-width:max-content;padding:10px 14px;background:none;border:0;border-bottom:2px solid transparent;color:var(--mute);font:inherit;font-weight:600;cursor:pointer}
+nav button.on{color:var(--text);border-color:var(--lilac)}
+main{padding:16px;max-width:1100px;margin:0 auto}
+.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr))}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card h2{margin:0 0 4px;font-size:15px}
+.card p.sub{margin:0 0 12px;color:var(--mute);font-size:13px}
+.field{margin:0 0 14px}
+.field label{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px;margin-bottom:5px}
+.field small{display:block;color:var(--mute);font-size:12px;margin-top:4px}
+.saved{color:var(--green);font-weight:500;opacity:0;transition:opacity .3s}.saved.on{opacity:1}
+input[type=text],input[type=number],textarea{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
+textarea{min-height:84px;resize:vertical}
+input:focus,textarea:focus{outline:2px solid rgba(210,123,255,.55);outline-offset:0;border-color:transparent}
+input[type=range]{width:100%;accent-color:var(--lilac)}
+.check{display:flex;align-items:center;gap:9px;margin:6px 0;font-size:14px;cursor:pointer}
+.field label.check{justify-content:flex-start;font-weight:400;font-size:14px}
+#infos-card{grid-column:1/-1}
+#infos-form{display:grid;gap:0 18px;grid-template-columns:repeat(auto-fill,minmax(300px,1fr))}
+.check input{width:18px;height:18px;accent-color:var(--violet)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.btn{padding:9px 14px;border-radius:9px;border:1px solid var(--line);background:var(--panel2);color:var(--text);font:inherit;font-weight:600;cursor:pointer}
+.btn:hover{border-color:rgba(210,123,255,.5)}
+.btn.primary{background:linear-gradient(135deg,var(--violet),var(--blue));border:0}
+.btn.danger{color:var(--red)}
+.btn.small{padding:6px 10px;font-size:13px}
+.btn:disabled{opacity:.5;cursor:default}
+.note{padding:10px 12px;border-radius:10px;background:var(--panel2);color:var(--mute);font-size:13px;margin:0 0 12px}
+.note.warn{background:rgba(255,212,92,.12);color:var(--yellow)}
+.note.ok{background:rgba(59,227,154,.10);color:var(--green)}
+.goal{margin:8px 0 12px}.goal .t{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px}
+.bar{height:8px;border-radius:4px;background:rgba(255,255,255,.08);overflow:hidden}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--violet),var(--sky));border-radius:4px;transition:width .6s}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:14px}.kv b{color:var(--mute);font-weight:500}
+.pack{display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid var(--line)}
+.pack:first-of-type{border-top:0}
+.pack img{width:132px;aspect-ratio:16/9;object-fit:cover;border-radius:8px;background:var(--panel2);flex-shrink:0}
+.pack .n{font-weight:700}.pack .s{color:var(--mute);font-size:13px;margin:2px 0 8px}
+.code{font:600 26px/1 ui-monospace,Consolas,monospace;letter-spacing:.12em;color:var(--lilac);margin:6px 0}
+.url{font:12px/1.4 ui-monospace,Consolas,monospace;word-break:break-all;background:#0A0A1F;border:1px solid var(--line);border-radius:8px;padding:8px 10px;margin:6px 0}
+.log{font:12px/1.5 ui-monospace,Consolas,monospace;color:var(--mute);max-height:260px;overflow:auto}
+.log div{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04)}
+.toast{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);padding:10px 16px;border-radius:12px;opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw}
+.toast.on{opacity:1}
+.hidden{display:none!important}
+.big{font-size:22px;font-weight:700}
+@media (max-width:420px){main{padding:10px}.grid{grid-template-columns:1fr}.pack img{width:96px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="top">
+    <div class="logo"><i></i>VOID Studio</div>
+    <div class="chips" id="chips"></div>
+  </div>
+  <nav id="tabs">
+    <button data-tab="infos" class="on">Infos</button>
+    <button data-tab="live">Live</button>
+    <button data-tab="packs">Packs</button>
+    <button data-tab="settings">Einstellungen</button>
+  </nav>
+</header>
+<main>
+  <div id="nokey" class="card hidden">
+    <h2>Schlüssel fehlt</h2>
+    <p class="sub">Öffne die Oberfläche über VOID Studio in OBS (Werkzeuge → Skripte → VOID Studio → Web-Oberfläche → „Im Browser öffnen“), oder füge den Link mit Schlüssel ein.</p>
+  </div>
+
+  <section id="tab-infos">
+    <div class="grid">
+      <div class="card" id="infos-card">
+        <h2 id="infos-title">Infos</h2>
+        <p class="sub" id="infos-sub"></p>
+        <div id="infos-form"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-live" class="hidden">
+    <div class="grid">
+      <div class="card">
+        <h2>Alerts</h2>
+        <p class="sub" id="alert-state"></p>
+        <div class="field"><label>Lautstärke <span id="vol-v"></span></label><input type="range" min="0" max="100" id="volume"></div>
+        <div class="row">
+          <button class="btn" data-act="pause" id="pause-btn">Pausieren</button>
+          <button class="btn" data-act="skip">Überspringen</button>
+          <button class="btn" data-act="replay">Letzten wiederholen</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Testen</h2>
+        <p class="sub">Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.</p>
+        <div class="row">
+          <button class="btn small" data-act="test_follow">Follow</button>
+          <button class="btn small" data-act="test_sub">Abo</button>
+          <button class="btn small" data-act="test_resub">Abo verlängert</button>
+          <button class="btn small" data-act="test_gift">Geschenk-Abos</button>
+          <button class="btn small" data-act="test_cheer">Bits</button>
+          <button class="btn small" data-act="test_raid">Raid</button>
+          <button class="btn small" data-act="test_redeem">Kanalpunkte</button>
+          <button class="btn small" data-act="test_chat">Chatnachricht</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Ziele</h2>
+        <p class="sub">Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.</p>
+        <div id="goals"></div>
+        <div class="field"><label>Follower-Ziel</label><input type="number" min="0" data-set="goal_follow"></div>
+        <div class="field"><label>Abo-Ziel</label><input type="number" min="0" data-set="goal_sub"></div>
+        <div class="field"><label>Bits-Ziel</label><input type="number" min="0" step="100" data-set="goal_bits"></div>
+        <button class="btn small" data-act="reset_bits">Bits-Ziel zurücksetzen</button>
+      </div>
+      <div class="card">
+        <h2>Session</h2>
+        <p class="sub">Daraus entsteht der Rückblick in „Stream endet“.</p>
+        <div class="kv" id="session"></div>
+        <div class="row" style="margin-top:12px"><button class="btn small danger" data-act="reset_session" data-confirm="Session-Rückblick zurücksetzen?">Rückblick zurücksetzen</button></div>
+      </div>
+      <div class="card hidden" id="irl-card">
+        <h2>IRL</h2>
+        <p class="sub" id="irl-state"></p>
+      </div>
+    </div>
+  </section>
+
+  <section id="tab-packs" class="hidden">
+    <div class="grid">
+      <div class="card" style="grid-column:1/-1">
+        <div id="studio-update" class="note warn hidden"></div>
+        <div id="pack-busy" class="note hidden"></div>
+        <div class="row">
+          <button class="btn" data-act="check">Nach Updates suchen</button>
+          <button class="btn" data-act="install_all">Alle Pack-Updates installieren</button>
+        </div>
+      </div>
+      <div class="card" style="grid-column:1/-1"><div id="packs"></div></div>
+    </div>
+  </section>
+
+  <section id="tab-settings" class="hidden">
+    <div class="grid">
+      <div class="card">
+        <h2>Twitch</h2>
+        <p class="sub" id="twitch-state"></p>
+        <div id="device" class="hidden">
+          <div class="note">Bei Twitch bestätigen: <a id="device-link" target="_blank" rel="noopener">twitch.tv/activate</a> öffnen und diesen Code eingeben:</div>
+          <div class="code" id="device-code"></div>
+        </div>
+        <div class="row">
+          <button class="btn primary" data-act="twitch_login">Mit Twitch verbinden</button>
+          <button class="btn" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Chat</h2>
+        <div class="field"><label>Ausgeblendete Namen</label><input type="text" data-set="ignore"><small>Kommagetrennt, z. B. Bots wie streamelements, nightbot.</small></div>
+        <label class="check"><input type="checkbox" data-set="hide_cmd">Befehle mit ! ausblenden</label>
+      </div>
+      <div class="card">
+        <h2>Spielszenen und Rückblick</h2>
+        <label class="check"><input type="checkbox" data-set="show_latest">Letzte Unterstützer an der Game-Kamera zeigen</label>
+        <div id="latest-items" style="padding-left:26px"></div>
+      </div>
+      <div class="card">
+        <h2>IRL</h2>
+        <p class="sub">Überwacht die Kamera-Quelle und schaltet bei einem Abbruch auf „Verbindung weg“ und zurück.</p>
+        <label class="check"><input type="checkbox" data-set="irl_auto">Bei Abbruch automatisch umschalten</label>
+        <div class="field"><label>Kamera-Quelle</label><input type="text" data-set="irl_source"></div>
+        <div class="row">
+          <div class="field" style="flex:1"><label>Umschalten nach (s)</label><input type="number" min="1" max="60" data-set="irl_delay"></div>
+          <div class="field" style="flex:1"><label>Zurück nach (s)</label><input type="number" min="1" max="60" data-set="irl_back"></div>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Telemetrie (ETS2/ATS)</h2>
+        <label class="check"><input type="checkbox" data-set="tele_on">Spiel-Telemetrie weiterreichen</label>
+        <div class="field"><label>Telemetrie-URL</label><input type="text" data-set="tele_url"></div>
+      </div>
+      <div class="card">
+        <h2>Zugriff</h2>
+        <p class="sub">Als Dock in OBS: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse:</p>
+        <div class="url" id="local-url"></div>
+        <button class="btn small" data-copy="local-url">Kopieren</button>
+        <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+        <label class="check"><input type="checkbox" data-set="remote_on">Auch im Heimnetz erreichbar (Handy, Tablet)</label>
+        <small style="color:var(--mute);font-size:12px">Geräte im selben Netz oder per VPN (z. B. Tailscale) öffnen die Oberfläche mit diesem Link. Wer ihn hat, kann VOID Studio steuern – nicht weitergeben.</small>
+        <div id="remote-urls"></div>
+        <div class="row" style="margin-top:12px"><button class="btn small danger" data-act="renew_key" data-confirm="Neuen Schlüssel erzeugen? Alle bisherigen Links und Docks funktionieren danach nicht mehr.">Neuen Schlüssel erzeugen</button></div>
+      </div>
+      <div class="card">
+        <h2>Protokoll</h2>
+        <div class="log" id="log"></div>
+      </div>
+    </div>
+  </section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+/* VOID Studio – Web-Oberfläche. Schlüssel aus #k=…, jede Anfrage schickt ihn im Header X-Void-Key. */
+let KEY=new URLSearchParams(location.hash.slice(1)).get('k')||'';
+try{if(KEY)localStorage.setItem('voidKey',KEY);else KEY=localStorage.getItem('voidKey')||''}catch(_){}
+const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+const el=(t,c,h)=>{const e=document.createElement(t);if(c)e.className=c;if(h!=null)e.innerHTML=h;return e};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const num=n=>Number(n||0).toLocaleString('de-DE');
+let S=null;
+
+async function api(path,body){
+  const r=await fetch(path,{method:body?'POST':'GET',headers:Object.assign({'X-Void-Key':KEY},body?{'Content-Type':'application/json'}:{}),
+    body:body?JSON.stringify(body):undefined,cache:'no-store'});
+  const j=await r.json().catch(()=>({}));
+  if(r.status===401){showNoKey();throw new Error('Schlüssel fehlt')}
+  if(!r.ok)throw new Error(j.error||('HTTP '+r.status));
+  return j;
+}
+function toast(msg){const t=$('#toast');t.textContent=msg;t.classList.add('on');clearTimeout(t._h);t._h=setTimeout(()=>t.classList.remove('on'),2600)}
+function showNoKey(){$('#nokey').classList.remove('hidden');$$('section').forEach(s=>s.classList.add('hidden'))}
+
+/* ---------- Tabs ---------- */
+function tab(name){
+  $$('#tabs button').forEach(b=>b.classList.toggle('on',b.dataset.tab===name));
+  $$('main>section').forEach(s=>s.classList.toggle('hidden',s.id!=='tab-'+name));
+  try{localStorage.setItem('voidTab',name)}catch(_){}
+}
+$$('#tabs button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
+try{const t=localStorage.getItem('voidTab');if(t&&$('#tab-'+t))tab(t)}catch(_){}
+
+/* ---------- Eingaben: beim Tippen nicht überschreiben ---------- */
+const busy=new WeakSet();
+function setVal(inp,v){if(document.activeElement===inp||busy.has(inp))return;
+  if(inp.type==='checkbox')inp.checked=!!v;else if(inp.value!==String(v??''))inp.value=v??''}
+function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
+
+/* ---------- Infos ---------- */
+let infoKeys='';
+function renderInfos(){
+  const form=$('#infos-form'),list=S.infos||[];
+  $('#infos-title').textContent=S.pack?`Infos · ${S.pack.name}`:'Infos';
+  $('#infos-sub').innerHTML=S.pack
+    ?'Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+(list.some(i=>!i.exists)?' <br><b style="color:var(--yellow)">In OBS fehlt die Szene „VOID · Infos“ oder ein Feld darin: in OBS unter Werkzeuge → Skripte → VOID Studio „Infos-Szene anlegen“.</b>':'')
+    :`Die aktive Szenensammlung „${esc(S.collection||'')}“ gehört zu keinem VOID-Pack. In OBS eine Pack-Sammlung wählen.`;
+  const keys=list.map(i=>i.label).join('|');
+  if(keys!==infoKeys){
+    infoKeys=keys;form.innerHTML='';
+    list.forEach(i=>{
+      const f=el('div','field');const lab=el('label','',`<span>${esc(i.label)}</span><span class="saved">gespeichert</span>`);
+      let inp;
+      if(i.label==='Wunschliste'){
+        inp=el('input');inp.type='checkbox';const c=el('label','check');c.append(inp,document.createTextNode('„Auf die Wunschliste!“-Sticker zeigen'));
+        f.append(lab,c);inp.onchange=()=>saveInfo(i.label,inp.checked?'ja':'',lab);
+      }else{
+        inp=i.multiline?el('textarea'):el('input');if(!i.multiline)inp.type='text';
+        inp.oninput=debounce(()=>saveInfo(i.label,inp.value,lab),700);
+        f.append(lab,inp);
+      }
+      inp.dataset.info=i.label;
+      if(i.help&&i.label!=='Wunschliste')f.append(el('small','',esc(i.help)));
+      form.append(f);
+    });
+  }
+  list.forEach(i=>{const inp=form.querySelector(`[data-info="${CSS.escape(i.label)}"]`);if(!inp)return;
+    if(inp.type==='checkbox')setVal(inp,/^(ja|an|1|x|yes|true)$/i.test(i.value));else setVal(inp,i.value)});
+}
+async function saveInfo(label,value,lab){
+  try{await api('/api/infos',{[label]:value});const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
+  catch(e){toast('Nicht gespeichert: '+e.message)}
+}
+
+/* ---------- Einstellungen (data-set) ---------- */
+$$('[data-set]').forEach(inp=>{
+  const k=inp.dataset.set;
+  const send=v=>api('/api/settings',{[k]:v}).then(r=>{S=r.state;render()}).catch(e=>toast('Nicht gespeichert: '+e.message));
+  if(inp.type==='checkbox')inp.onchange=()=>send(inp.checked);
+  else if(inp.type==='number')inp.onchange=()=>send(parseInt(inp.value||'0',10));
+  else inp.oninput=debounce(()=>send(inp.value),700);
+});
+$('#volume').oninput=()=>$('#vol-v').textContent=$('#volume').value+' %';
+$('#volume').onchange=()=>api('/api/settings',{volume:parseInt($('#volume').value,10)}).catch(e=>toast(e.message));
+const LATEST=[['follow','Follow'],['sub','Abo'],['gift','Geschenk'],['cheer','Bits'],['raid','Raid']];
+LATEST.forEach(([k,l])=>{const c=el('label','check');const i=el('input');i.type='checkbox';i.dataset.latest=k;c.append(i,document.createTextNode(l));$('#latest-items').append(c);
+  i.onchange=()=>api('/api/settings',{latest_items:$$('[data-latest]').filter(x=>x.checked).map(x=>x.dataset.latest)}).catch(e=>toast(e.message))});
+
+/* ---------- Knöpfe (data-act) ---------- */
+document.addEventListener('click',async ev=>{
+  const b=ev.target.closest('[data-act]');
+  if(b){
+    if(b.dataset.confirm&&!confirm(b.dataset.confirm))return;
+    b.disabled=true;
+    try{const r=await api('/api/control',{action:b.dataset.act,id:b.dataset.id});S=r.state;render();if(r.message)toast(r.message)}
+    catch(e){toast(e.message)}
+    finally{b.disabled=false}
+    return;
+  }
+  const c=ev.target.closest('[data-copy]');
+  if(c){const t=$('#'+c.dataset.copy).textContent;
+    (navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>toast('Kopiert')).catch(()=>{
+      const r=document.createRange();r.selectNodeContents($('#'+c.dataset.copy));getSelection().removeAllRanges();getSelection().addRange(r);toast('Markiert – Strg+C')})}
+});
+
+/* ---------- Anzeige ---------- */
+function render(){
+  if(!S)return;
+  const tw=S.twitch;
+  $('#chips').innerHTML=[
+    tw.connected?`<span class="chip ok">Twitch: ${esc(tw.login||'verbunden')}</span>`:`<span class="chip ${tw.saved?'warn':'bad'}">Twitch: ${tw.saved?'verbindet …':'nicht verbunden'}</span>`,
+    S.pack?`<span class="chip">${esc(S.pack.name)}</span>`:'',
+    S.live.paused?'<span class="chip warn">Alerts pausiert</span>':'',
+    S.studio_update?`<span class="chip warn">Update ${esc(S.studio_update)}</span>`:'',
+    `<span class="chip">${esc(S.version)}</span>`].join('');
+  renderInfos();
+  /* Live */
+  $('#alert-state').textContent=S.live.paused?'Pausiert – neue Alerts warten, bis du fortsetzt.':'Alerts laufen.';
+  $('#pause-btn').textContent=S.live.paused?'Fortsetzen':'Pausieren';
+  setVal($('#volume'),S.live.volume);$('#vol-v').textContent=$('#volume').value+' %';
+  $('#goals').innerHTML=(S.live.goals||[]).map(g=>`<div class="goal"><div class="t"><span>${esc(g.label)}</span><span>${num(g.cur)} / ${num(g.target)}</span></div><div class="bar"><i style="width:${Math.min(100,g.cur/g.target*100)}%"></i></div></div>`).join('')||'<p class="sub">Keine Ziele aktiv.</p>';
+  const ss=S.live.session||{},cnt=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
+  $('#session').innerHTML=`<b>Neue Follower</b><span>${num((ss.follows||[]).length)}</span><b>Abos</b><span>${num((ss.subs||[]).length)}</span>
+    <b>Verschenkte Abos</b><span>${num(cnt(ss.gifts))}</span><b>Bits</b><span>${num(cnt(ss.bits))}</span><b>Raids</b><span>${num((ss.raids||[]).length)}</span>
+    <b>Follower gesamt</b><span>${S.live.followers==null?'–':num(S.live.followers)}</span><b>Abonnenten</b><span>${S.live.subs==null?'–':num(S.live.subs)}</span>`;
+  const irlOn=S.irl.auto||(S.pack&&S.pack.id==='irl');
+  $('#irl-card').classList.toggle('hidden',!irlOn);
+  if(irlOn){const since=S.irl.since?Math.max(0,Math.round(Date.now()/1000-S.irl.since)):0;
+    $('#irl-state').innerHTML=S.irl.live==null?`„${esc(S.irl.source)}“ wird überwacht, sobald die Quelle in der Sammlung ist.`
+      :S.irl.live?`<span class="big" style="color:var(--green)">Signal da</span><br>„${esc(S.irl.source)}“ läuft.`
+      :`<span class="big" style="color:var(--red)">Signal weg</span><br>seit ${Math.floor(since/60)}:${String(since%60).padStart(2,'0')} min`;}
+  /* Packs */
+  const up=$('#studio-update');up.classList.toggle('hidden',!S.studio_update);
+  if(S.studio_update)up.innerHTML=`VOID Studio ${esc(S.studio_update)} ist verfügbar: ${esc((S.studio_changelog||[]).slice(0,2).join(' · '))}<div class="row" style="margin-top:8px"><button class="btn small primary" data-act="studio_update">Jetzt aktualisieren</button></div>`;
+  const msg=[S.busy,S.error,...(S.notes||[]).slice(-1)].filter(Boolean);
+  $('#pack-busy').classList.toggle('hidden',!msg.length);$('#pack-busy').textContent=msg.join(' · ');
+  $('#packs').innerHTML=(S.packs||[]).map(p=>`<div class="pack">${p.preview?`<img src="${esc(p.preview)}" alt="" loading="lazy">`:'<img alt="">'}
+    <div><div class="n">${esc(p.name)}</div><div class="s">${esc(p.status)}</div><div class="row">
+      <button class="btn small ${p.installed?'':'primary'}" data-act="install" data-id="${esc(p.id)}">${p.installed?(p.status.startsWith('Update')?'Aktualisieren':'Neu installieren'):'Installieren'}</button>
+      ${p.installed?`<button class="btn small" data-act="setup" data-id="${esc(p.id)}">In OBS einrichten</button>
+      <button class="btn small danger" data-act="remove" data-id="${esc(p.id)}" data-confirm="${esc(p.name)} entfernen? Die Szenensammlung in OBS bleibt.">Entfernen</button>`:''}
+    </div></div></div>`).join('')||'<p class="sub">Pack-Liste wird geladen …</p>';
+  /* Einstellungen */
+  $('#twitch-state').textContent=tw.status;
+  $('#device').classList.toggle('hidden',!tw.device);
+  if(tw.device){$('#device-code').textContent=tw.device.code;$('#device-link').href=tw.device.url;$('#device-link').textContent=tw.device.url.replace(/^https?:\/\//,'')}
+  $$('[data-set]').forEach(i=>setVal(i,S.settings[i.dataset.set]));
+  $$('[data-latest]').forEach(i=>setVal(i,(S.settings.latest_items||[]).includes(i.dataset.latest)));
+  $('#local-url').textContent=S.local_url;
+  $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><button class="btn small" data-copy="ru${i}">Kopieren</button>`).join('')
+    :'<div class="note warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
+  $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
+}
+
+async function poll(){
+  if(!KEY){showNoKey();return}
+  try{S=await api('/api/state');render()}catch(e){if(e.message!=='Schlüssel fehlt')$('#chips').innerHTML='<span class="chip bad">VOID Studio nicht erreichbar – läuft OBS?</span>'}
+}
+poll();
+setInterval(()=>{if(!document.hidden)poll()},2000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});
+</script>
+</body>
+</html>
+"""  # Ende WEB_HTML
