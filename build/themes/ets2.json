@@ -1,0 +1,38 @@
+{
+  "id": "ets2",
+  "order": 3,
+  "label": "Euro Truck Simulator 2",
+  "game": "ETS2",
+  "generator": "make_ets.py",
+  "template": "tpl_ets2.html",
+  "layout": "game",
+  "cam": [1472, 814],
+  "scenes": ["start", "pause", "end", "chat", "game", "drive"],
+  "drive": true,
+  "script_settings": {
+    "tele_on": true
+  },
+  "fonts": {
+    "__BW5__": ["barlow-500.woff2", "fontsource-barlow/files/barlow-latin-500-normal.woff2"],
+    "__BW7__": ["barlow-700.woff2", "fontsource-barlow/files/barlow-latin-700-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "barlow": "fontsource-barlow",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7500],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["drive", "scene=drive&demo=1&test=1", 5000],
+    ["end", "scene=end&test=1", 16500]
+  ],
+  "readme": {
+    "stinger": "Ein VOID-Sattelzug fährt formatfüllend durchs Bild, die Bildmarke baut sich auf der Plane auf",
+    "game_scenes": "ETS2-Fahrt und ETS2-Telemetrie"
+  }
+}

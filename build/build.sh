@@ -3,10 +3,10 @@
 # Voraussetzungen: Python 3.11+, pip install -r requirements.txt && playwright install chromium, ffmpeg
 set -euo pipefail
 cd "$(dirname "$0")"
-for t in wd mc ets gta void; do python3 make_$t.py >/dev/null; done
+for g in $(python3 themes.py generators); do python3 "$g" >/dev/null; done   # ältere Packs: Template aus tpl.html ableiten
 python3 packs.py "$@"
 python3 stg.py render "$@"
 python3 prev_packs.py "$@"
-bash readme.sh
+python3 readme.py
 python3 build_release.py
 echo "Fertig: dist/release/"

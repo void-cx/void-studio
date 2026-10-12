@@ -1,0 +1,33 @@
+{
+  "id": "gta",
+  "order": 4,
+  "label": "GTA V / Roleplay",
+  "game": "GTA",
+  "generator": "make_gta.py",
+  "template": "tpl_gta.html",
+  "layout": "game",
+  "cam": [1472, 330],
+  "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Charakter"],
+  "fonts": {
+    "__AN4__": ["anton-400.woff2", "fontsource-anton/files/anton-latin-400-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "anton": "fontsource-anton",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7500],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["end", "scene=end&test=1", 16500]
+  ],
+  "readme": {
+    "stinger": "Vier Sonnenuntergangs-Bänder fegen schräg durchs Bild wie beim Charakterwechsel, die Bildmarke baut sich auf, dann kaskadieren die Farben wieder raus",
+    "cam": "rechts mittig (oben rechts liegen Geld und Fahndungslevel)"
+  }
+}

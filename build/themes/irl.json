@@ -1,0 +1,39 @@
+{
+  "id": "irl",
+  "order": 9,
+  "label": "IRL (unterwegs, eine bis vier Kameras)",
+  "game": "IRL",
+  "collname": "VOID IRL",
+  "template": "themes/irl/scenes.html",
+  "core": true,
+  "layout": "irl",
+  "scenes": ["start", "solo", "duo", "pip", "quad", "chat", "pause", "signal", "end"],
+  "infos": ["Ort", "Wetter-Ort", "Kamera 1", "Kamera 2", "Kamera 3", "Kamera 4"],
+  "param_example": "#place=Hamburg&lat=53.54&lon=9.99&cam1=Hauptkamera",
+  "script_settings": {
+    "irl_auto": true
+  },
+  "fonts": {
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"],
+    "__SG7__": ["space-grotesk-700.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-700-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7600],
+    ["solo", "scene=solo&demo=1&test=1", 5000],
+    ["duo", "scene=duo&demo=1&test=1", 4000],
+    ["pip", "scene=pip&demo=1&test=1", 4000],
+    ["quad", "scene=quad&demo=1&test=1", 8000],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["signal", "scene=signal&test=1", 7600],
+    ["end", "scene=end&test=1", 7600]
+  ],
+  "readme": {
+    "file": "themes/irl/LIESMICH.md"
+  }
+}

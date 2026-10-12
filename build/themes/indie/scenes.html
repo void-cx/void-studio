@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<!--
+  VOID × Indie Games & Demos · OBS-Szenenset im Sketchbuch-Look – Browserquelle 1920 × 1080, eigene Framerate 60
+
+  In OBS als „Lokale Datei“ die passende Einstiegsdatei aus obs/ wählen. Parameter dort anhängen (#…&…).
+
+  ?scene=start     Stream startet        Demo-Regal mit &games=A|B|C · &min=5 Countdown
+  ?scene=pause     Kurze Pause           „Spiel wird gespeichert …“ mit Pixel-Balken
+  ?scene=end       Stream endet          Abspann mit gespielten Spielen und Unterstützern
+  ?scene=chat      Just Chatting         Kamera-Loch x 64 y 176 1248 × 702 als Polaroid, Chat als Notizzettel
+  ?scene=game      Spiel                 transparent, Polaroid-Kamera &cam=br|bl|tr|tl|off (Standard br: x 1472 y 814 416 × 234)
+  ?scene=alerts    nur Alerts            ?scene=goals  nur Ziele        ?scene=stinger  Vorschau des Übergangs
+
+  Fürs aktuelle Spiel (Notizzettel in der Spielszene):
+    &game=Name  &dev=Studio  &status=Demo|Early%20Access|Prototyp|Release  &wish=1 (Sticker „Auf die Wunschliste!“)
+  Optional: &games=A|B|C (Demo-Regal und Abspann)  &title=…  &sub=A|B|C  &alerts=0  &goals=0  &test=1  &demo=1  &bridge=0  &port=8787
+-->
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VOID × Indie · Szenen</title>
+<style>
+@font-face{font-family:"Pixelify Sans";font-weight:500;src:url(data:font/woff2;base64,__PX5__) format("woff2");font-display:block}
+@font-face{font-family:"Pixelify Sans";font-weight:700;src:url(data:font/woff2;base64,__PX7__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:400;src:url(data:font/woff2;base64,__SG4__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
+@font-face{font-family:"Space Grotesk";font-weight:700;src:url(data:font/woff2;base64,__SG7__) format("woff2");font-display:block}
+@font-face{font-family:"JetBrains Mono";font-weight:500;src:url(data:font/woff2;base64,__JB5__) format("woff2");font-display:block}
+:root{
+  --desk:#17142B; --paper:#F4EFE4; --paper2:#EAE2D2; --ink:#1B1830; --pencil:#6B6680;
+  --violet:#B303F8; --blue:#1141E4; --lilac:#D27BFF; --sky:#7C9BFF; --sun:#FFD45C; --mint:#5BE3B0; --coral:#FF7A6B;
+  --tape:rgba(255,236,170,.72);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:transparent}
+body{font-family:"Space Grotesk",system-ui,sans-serif;color:var(--ink);-webkit-font-smoothing:antialiased}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden}
+.px{font-family:"Pixelify Sans",monospace}
+
+/* ---------- Schreibtisch: dunkles Karopapier mit Kritzeleien ---------- */
+.desk{position:absolute;inset:0;background:
+  radial-gradient(900px 600px at 10% 0%, rgba(179,3,248,.28), transparent 70%),
+  radial-gradient(900px 700px at 100% 100%, rgba(17,65,228,.30), transparent 70%),
+  linear-gradient(rgba(255,255,255,.045) 1px, transparent 1px) 0 0/40px 40px,
+  linear-gradient(90deg, rgba(255,255,255,.045) 1px, transparent 1px) 0 0/40px 40px,
+  var(--desk)}
+.doodles{position:absolute;inset:0;pointer-events:none}
+.doodle{position:absolute;color:rgba(210,123,255,.35);font-family:"Pixelify Sans";font-weight:700;animation:bob 6s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-10px) rotate(var(--r2,4deg))}}
+
+/* ---------- Papier, Klebeband, Sticker ---------- */
+.card{position:absolute;background:var(--paper);box-shadow:0 2px 0 var(--paper2),0 18px 40px rgba(0,0,0,.45);padding:28px 34px;
+  background-image:repeating-linear-gradient(180deg,transparent 0 37px,rgba(17,65,228,.10) 37px 38px)}
+.tape{position:absolute;width:130px;height:34px;background:var(--tape);box-shadow:0 1px 2px rgba(0,0,0,.15);
+  clip-path:polygon(3% 0,97% 4%,100% 50%,96% 100%,2% 96%,0 50%)}
+.sticker{position:absolute;display:flex;align-items:center;justify-content:center;text-align:center;font-family:"Pixelify Sans";font-weight:700;
+  color:var(--ink);background:var(--sun);border:4px solid #fff;border-radius:50%;box-shadow:0 8px 18px rgba(0,0,0,.35);line-height:1.05}
+.slap{animation:slap .5s cubic-bezier(.3,1.6,.5,1) both}
+@keyframes slap{from{opacity:0;transform:scale(1.8) rotate(calc(var(--r,0deg) - 20deg))}to{opacity:1;transform:rotate(var(--r,0deg))}}
+
+/* ---------- Titelkarte ---------- */
+.titlecard{left:120px;top:150px;width:900px;transform:rotate(-2deg);animation:drop .7s cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes drop{from{opacity:0;transform:translateY(-60px) rotate(-8deg)}}
+.titlecard .eyebrow{font-family:"Pixelify Sans";font-weight:500;font-size:28px;color:var(--violet);letter-spacing:.06em}
+.titlecard .t{font-weight:700;font-size:118px;line-height:1;letter-spacing:-.02em;margin:6px 0 10px}
+.titlecard .t span{background:linear-gradient(transparent 62%,rgba(255,212,92,.85) 62% 92%,transparent 92%)}
+.titlecard .st{font-family:"Pixelify Sans";font-weight:500;font-size:38px;color:var(--pencil);min-height:46px}
+.titlecard .count{margin-top:10px;font-family:"Pixelify Sans";font-weight:700;font-size:40px;color:var(--blue)}
+.sw{display:inline-block;transition:opacity .35s,transform .35s cubic-bezier(.3,1.4,.5,1)}
+.sw.out{opacity:0;transform:translateY(-14px) rotate(-3deg)}
+.sw.in{opacity:0;transform:translateY(14px) rotate(3deg);transition:none}
+
+/* ---------- Demo-Regal (Start) ---------- */
+.shelf{position:absolute;left:120px;right:120px;bottom:120px;height:300px}
+.shelf .label{position:absolute;left:0;top:-58px;font-family:"Pixelify Sans";font-weight:700;font-size:34px;color:var(--paper)}
+.shelf .board{position:absolute;left:0;right:0;bottom:0;height:22px;background:linear-gradient(#7A4B2A,#4E2E18);box-shadow:0 10px 24px rgba(0,0,0,.5)}
+.cart{position:absolute;bottom:22px;width:250px;height:250px;padding:20px 18px;background:var(--paper);box-shadow:0 12px 26px rgba(0,0,0,.45);
+  display:flex;flex-direction:column;justify-content:flex-end;animation:drop .6s cubic-bezier(.2,.9,.3,1.2) both}
+.cart::before{content:"";position:absolute;left:18px;right:18px;top:18px;height:120px;background:var(--c,var(--violet));
+  background-image:linear-gradient(135deg,rgba(255,255,255,.25) 25%,transparent 25% 50%,rgba(255,255,255,.25) 50% 75%,transparent 75%);background-size:24px 24px}
+.cart .n{font-weight:700;font-size:28px;line-height:1.05}
+.cart .s{font-family:"Pixelify Sans";font-weight:500;font-size:20px;color:var(--pencil);margin-top:4px}
+
+/* ---------- Speichern (Pause) ---------- */
+.save{position:absolute;right:150px;top:220px;width:560px;padding:34px 38px 40px;background:#0E0C1D;border:6px solid var(--paper);
+  box-shadow:10px 10px 0 var(--violet);transform:rotate(1.5deg);animation:drop .7s .15s cubic-bezier(.2,.9,.3,1.2) both}
+.save .h{font-family:"Pixelify Sans";font-weight:700;font-size:40px;color:var(--paper);display:flex;align-items:center;gap:16px}
+.save .h i{width:34px;height:34px;background:var(--sun);clip-path:polygon(0 0,80% 0,100% 20%,100% 100%,0 100%);position:relative;animation:spinsave 1.2s steps(4) infinite}
+@keyframes spinsave{to{transform:rotate(360deg)}}
+.save .bar{margin-top:26px;height:34px;border:4px solid var(--paper);padding:4px;display:flex;gap:4px}
+.save .bar b{flex:1;background:var(--lilac);opacity:.12}
+.save .bar b.on{opacity:1}
+.save .hint{margin-top:18px;font-family:"Pixelify Sans";font-weight:500;font-size:24px;color:var(--sky)}
+.save .t{margin-top:8px;font-family:"JetBrains Mono";font-size:22px;color:var(--pencil)}
+
+/* ---------- Abspann (Ende) ---------- */
+.credits{position:absolute;right:160px;top:0;bottom:0;width:640px;overflow:hidden;
+  -webkit-mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent);mask-image:linear-gradient(180deg,transparent,#000 18%,#000 82%,transparent)}
+.roll{position:absolute;left:0;right:0;top:100%;text-align:center;color:var(--paper);animation:roll var(--dur,30s) linear infinite}
+@keyframes roll{to{transform:translateY(calc(-100% - 1100px))}}
+.roll h3{font-family:"Pixelify Sans";font-weight:500;font-size:24px;color:var(--lilac);letter-spacing:.12em;text-transform:uppercase;margin:60px 0 10px}
+.roll p{font-weight:700;font-size:38px;line-height:1.25}
+.roll small{display:block;font-family:"Pixelify Sans";font-weight:500;font-size:22px;color:var(--sky)}
+.roll .fin{margin-top:120px}
+.roll .fin .vmark{width:140px;margin:0 auto 20px}
+
+/* ---------- Polaroid-Rahmen ---------- */
+.polaroid{position:absolute;background:var(--paper);box-shadow:0 20px 40px rgba(0,0,0,.45)}
+.polaroid .cap{position:absolute;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;gap:12px;
+  font-family:"Pixelify Sans";font-weight:700;color:var(--ink)}
+.polaroid .cap img{height:.95em}
+
+/* ---------- Chat als Notizzettel ---------- */
+.notes{position:absolute;display:flex;flex-direction:column;justify-content:flex-end;gap:14px;overflow:hidden;padding:20px 14px 6px}
+.msg{position:relative;flex-shrink:0;background:var(--paper);padding:14px 18px 16px;box-shadow:0 8px 16px rgba(0,0,0,.35);
+  transform:rotate(var(--r,0deg));animation:note .45s cubic-bezier(.3,1.5,.5,1) both}
+.msg::before{content:"";position:absolute;left:50%;top:-10px;width:80px;height:22px;margin-left:-40px;background:var(--tape);transform:rotate(-3deg)}
+.msg:nth-child(3n+1){background:#FFF3B8}.msg:nth-child(3n+2){background:#E9E0FF}
+@keyframes note{from{opacity:0;transform:translateY(30px) rotate(calc(var(--r,0deg) + 8deg))}}
+.m-head{display:flex;align-items:center;gap:7px;margin-bottom:4px}
+.m-badge{width:18px;height:18px}
+.m-name{font-family:"Pixelify Sans";font-weight:700;font-size:22px;filter:brightness(.55) saturate(1.6)}
+.m-text{font-size:20px;line-height:1.4;color:var(--ink);overflow-wrap:anywhere}
+.m-emote{height:28px;vertical-align:-7px;margin:0 2px}
+.chathead{position:absolute;left:64px;top:52px;display:flex;align-items:center;gap:24px}
+.chathead .t{font-weight:700;font-size:84px;color:var(--paper);letter-spacing:-.02em}
+.chathead .t span{background:linear-gradient(transparent 62%,rgba(179,3,248,.75) 62% 92%,transparent 92%)}
+
+/* ---------- Spielszene: Notizzettel zum Spiel ---------- */
+.nowcard{left:40px;top:40px;width:430px;padding:22px 26px 24px;transform:rotate(-2.5deg);background-image:none}
+.nowcard .k{font-family:"Pixelify Sans";font-weight:500;font-size:20px;color:var(--violet)}
+.nowcard .g{font-weight:700;font-size:40px;line-height:1.05;margin:2px 0 4px}
+.nowcard .d{font-family:"Pixelify Sans";font-weight:500;font-size:22px;color:var(--pencil)}
+
+/* ---------- Ziele als Klebeetiketten ---------- */
+.goals{display:flex;flex-direction:column;gap:10px}
+.goal{background:var(--paper);padding:10px 14px 12px;box-shadow:0 6px 14px rgba(0,0,0,.35)}
+.goal:nth-child(odd){transform:rotate(-1deg)}.goal:nth-child(even){transform:rotate(.8deg)}
+.g-top{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:8px}
+.g-l{font-family:"Pixelify Sans";font-weight:700;font-size:19px;color:var(--ink)}
+.g-v{font-family:"JetBrains Mono";font-size:16px;color:var(--pencil)}
+.g-track{position:relative;height:14px;border:3px solid var(--ink);padding:2px}
+.g-fill{position:absolute;inset:2px;background:repeating-linear-gradient(90deg,var(--violet) 0 10px,var(--lilac) 10px 12px)}
+.goal.full .g-fill{background:var(--mint)}
+.goal.lt .g-top{margin:0}
+.goal.lt .g-v{font-family:"Space Grotesk";font-weight:700;font-size:19px;color:var(--ink);max-width:62%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* ---------- Alerts: Sticker klatscht drauf, Zettel daneben, Abziehen beim Gehen ---------- */
+.alerts{position:absolute;right:70px;top:70px;width:640px;height:330px;z-index:20;pointer-events:none}
+.alert{position:absolute;inset:0}
+.alert .stk{position:absolute;left:0;top:30px;width:230px;height:230px;font-size:30px;padding:24px;--r:-8deg;flex-direction:column;gap:8px}
+.alert .stk .vmark{width:84px}
+.alert.big .stk{background:var(--lilac);width:260px;height:260px;top:10px}
+.alert .slip{position:absolute;left:170px;top:70px;right:0;padding:22px 28px 24px 90px;background:var(--paper);box-shadow:0 14px 30px rgba(0,0,0,.45);transform:rotate(2deg)}
+.alert .slip .k{font-family:"Pixelify Sans";font-weight:700;font-size:24px;color:var(--violet)}
+.alert .slip .n{font-weight:700;font-size:48px;line-height:1.05;margin:2px 0 4px;overflow-wrap:anywhere}
+.alert .slip .d{font-family:"Pixelify Sans";font-weight:500;font-size:24px;color:var(--pencil)}
+.alert .slip .m{margin-top:8px;font-size:20px;line-height:1.35}
+.alert .slip,.alert .stk{opacity:0}
+.alert.in .stk{animation:slap .5s cubic-bezier(.3,1.6,.5,1) both}
+.alert.in .slip{animation:slip .5s .25s cubic-bezier(.2,.9,.3,1.2) both}
+@keyframes slip{from{opacity:0;transform:translateX(60px) rotate(8deg)}to{opacity:1;transform:rotate(2deg)}}
+.alert.out .stk{animation:peel .55s ease-in both}.alert.out .slip{animation:peel .5s ease-in both}
+@keyframes peel{from{opacity:1;transform:rotate(var(--r,2deg))}to{opacity:0;transform:translate(40px,-80px) rotate(25deg) scale(.8)}}
+
+/* ---------- Übergang: Papierbögen fliegen rein, Sticker drauf, Bögen fliegen raus ---------- */
+#stg{position:absolute;inset:0;overflow:hidden}
+.in-sheet{position:absolute;left:-15%;top:-20%;width:130%;height:140%;animation:sheet 1.95s both}
+.in-sheet.a{background:var(--violet);--from:translate(-120%,30%) rotate(-25deg);--to:translate(120%,-40%) rotate(20deg);animation-delay:0s}
+.in-sheet.b{background:var(--blue);--from:translate(120%,40%) rotate(20deg);--to:translate(-120%,30%) rotate(-18deg);animation-delay:.05s}
+.in-sheet.c{background:var(--paper);--from:translate(0,-130%) rotate(-10deg);--to:translate(0,130%) rotate(12deg);animation-delay:.1s;
+  background-image:linear-gradient(rgba(17,65,228,.10) 1px,transparent 1px),linear-gradient(90deg,rgba(17,65,228,.10) 1px,transparent 1px);background-size:40px 40px}
+@keyframes sheet{0%{transform:var(--from);animation-timing-function:cubic-bezier(.2,.8,.3,1)}22%,66%{transform:rotate(0)}68%{animation-timing-function:cubic-bezier(.6,0,.9,.5)}100%{transform:var(--to)}}
+.in-stk{position:absolute;width:240px;height:240px;font-size:44px;opacity:0;animation:stk 1.95s both}
+@keyframes stk{0%,24%{opacity:0;transform:scale(2) rotate(calc(var(--r) - 25deg))}31%,64%{opacity:1;transform:rotate(var(--r))}68%,100%{opacity:0;transform:translateY(-60px) rotate(calc(var(--r) + 30deg))}}
+.in-mark{position:absolute;left:50%;top:50%;width:300px;height:300px;margin:-150px 0 0 -150px;border-radius:50%;background:#fff;
+  box-shadow:0 12px 30px rgba(0,0,0,.3);padding:50px;opacity:0;animation:inMark 1.95s both}
+@keyframes inMark{0%,20%{opacity:0;transform:scale(2.2) rotate(-30deg)}27%,64%{opacity:1;transform:rotate(-6deg)}68%,100%{opacity:0;transform:scale(.6) rotate(20deg)}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script>
+/*@CORE@*/
+
+/* =========================================================
+   Indie Games & Demos: Sketchbuch auf dunklem Karopapier, Klebeband, Sticker, Pixel-Schrift.
+   ========================================================= */
+const TESTGAMES=['Pixel Pilgrim|Demo','Moss & Mortar|Early Access','Tiny Lighthouse|Prototyp','Neon Garden|Demo'];
+const games=()=>list('games',TEST?TESTGAMES:[]).map(s=>{const [n,st]=s.split(/\s*[:|]\s*/);return {name:n,status:st||''}});
+const COLORS=['var(--violet)','var(--blue)','var(--coral)','var(--mint)','var(--sun)','var(--lilac)'];
+
+function desk(){
+  put(stage,'desk');const d=put(stage,'doodles');
+  [['★',1700,90,46],['♥',860,70,36],['▲',1500,980,40],['✦',60,620,44],['◆',1080,1010,30],['✿',1830,560,40]].forEach(([c,x,y,s],i)=>{
+    const e=put(d,'doodle',c,`left:${x}px;top:${y}px;font-size:${s}px;animation-delay:-${i*1.1}s;--r2:${i%2?-6:6}deg`)});
+}
+function tape(parent,css){return put(parent,'tape','',css)}
+function sticker(parent,html,css,cls=''){return put(parent,'sticker slap '+cls,html,css)}
+function titleCard(eyebrow,title,lines,every=5200){
+  const c=put(stage,'card titlecard');tape(c,'left:60px;top:-16px;transform:rotate(-4deg)');tape(c,'right:60px;top:-14px;transform:rotate(5deg)');
+  put(c,'eyebrow',eyebrow);
+  const t=put(c,'t','<span></span>');t.firstChild.textContent=P.get('title')||title;
+  const st=put(c,'st');cycle(st,P.get('sub')?list('sub'):lines,every);
+  return c;
+}
+
+/* ---------- Szenen ---------- */
+function start(){
+  desk();
+  const c=titleCard('> enter the void','Stream startet',['Demos werden geladen','Controller wird gesucht','Shader kompilieren …','Kaffee steht bereit','Gleich geht’s los']);
+  const ct=put(c,'count');
+  countdown(s=>ct.innerHTML=s>0?`Live in ${mmss(s)}`:'Gleich live!');
+  sticker(stage,'Heute<br>Indies!','left:1000px;top:120px;width:170px;height:170px;font-size:30px;--r:12deg;animation-delay:.5s');
+  const mk=makeMark({d:300,t:700});mk.style.cssText='position:absolute;right:220px;top:150px;width:300px';stage.appendChild(mk);
+  const gs=games();
+  if(gs.length){
+    const sh=put(stage,'shelf');put(sh,'label','Heute im Demo-Regal');put(sh,'board');
+    gs.slice(0,6).forEach((g,i)=>{const w=Math.min(250,(1680-(gs.length-1)*30)/gs.length);
+      const ca=put(sh,'cart','',`left:${i*(w+30)}px;width:${w}px;--c:${COLORS[i%COLORS.length]};animation-delay:${.3+i*.12}s;transform:rotate(${i%2?1.5:-1.5}deg)`);
+      const n=put(ca,'n');n.textContent=g.name;if(g.status){const s=put(ca,'s');s.textContent=g.status}});
+  }else{
+    const g=put(stage,'goals','',`position:absolute;left:120px;bottom:120px;width:520px`);goalsInto(g);
+  }
+}
+
+function pause(){
+  desk();
+  titleCard('> speicherpunkt','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines(),'Snack-Pause']);
+  const s=put(stage,'save');put(s,'h','<i></i>Spiel wird gespeichert …');
+  const bar=put(s,'bar');const bs=[...Array(12)].map(()=>bar.appendChild(el('b')));
+  let k=0;setInterval(()=>{k=(k+1)%14;bs.forEach((b,i)=>b.classList.toggle('on',i<k))},380);
+  put(s,'hint','Nicht ausschalten.');const t=put(s,'t','Pause seit 00:00');
+  const t0=Date.now();setInterval(()=>t.textContent='Pause seit '+mmss((Date.now()-t0)/1000|0),500);
+  const g=put(stage,'goals','',`position:absolute;left:120px;bottom:120px;width:520px`);goalsInto(g);
+  const l=put(stage,'goals','',`position:absolute;left:700px;bottom:120px;width:520px`);latestInto(l);
+}
+
+function end(){
+  desk();
+  const c=titleCard('> credits','Stream endet',()=>['Danke fürs Zuschauen','Bis zum nächsten Mal','Komm auf den Discord: void.cx'],4800);
+  c.style.top='300px';c.style.width='860px';
+  sticker(stage,'Danke!','left:840px;top:230px;width:160px;height:160px;font-size:34px;--r:10deg;animation-delay:.6s');
+  const cr=put(stage,'credits');const roll=put(cr,'roll');
+  const draw=()=>{
+    const sec=(h,items)=>{if(!items.length)return '';return `<h3>${h}</h3>`+items.map(([a,b])=>`<p>${esc(a)}${b?`<small>${esc(b)}</small>`:''}</p>`).join('')};
+    const s=STATE.session||{};
+    let h=sec('Gespielt',games().map(g=>[g.name,g.status]));
+    h+=sec('Unterstützt von',supporters().filter(x=>x.score>1).map(x=>[x.user,x.parts.join(' · ')]));
+    h+=sec('Neu dabei',(s.follows||[]).map(u=>[u,'']));
+    h+=sec('Overlay','Enter The Void|void.cx'.split('|').map(x=>[x,'']));
+    roll.innerHTML=h+'<div class="fin"></div>';
+    const m=makeMark({t:900});roll.querySelector('.fin').append(m,el('p','','Danke fürs Zuschauen'));
+    roll.style.setProperty('--dur',Math.max(18,roll.children.length*1.6)+'s');
+  };
+  let last='';onState(()=>{const k=JSON.stringify(STATE.session||{});if(k!==last){last=k;draw()}});
+}
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function polaroid(r,{pad=18,bottom=64,rot=0,label=''}={}){
+  /* Rahmen um ein Loch: vier Streifen, damit die Kamera darunter sichtbar bleibt */
+  const p=put(stage,'polaroid','',`left:${r.x-pad}px;top:${r.y-pad}px;width:${r.w+pad*2}px;height:${r.h+pad+bottom}px;`+
+    `clip-path:polygon(evenodd,0 0,100% 0,100% 100%,0 100%,0 0,${pad}px ${pad}px,${pad+r.w}px ${pad}px,${pad+r.w}px ${pad+r.h}px,${pad}px ${pad+r.h}px,${pad}px ${pad}px)`);
+  const cap=put(p,'cap','',`height:${bottom}px;font-size:${Math.round(bottom*.5)}px`);
+  const im=el('img');im.src=MARK;im.alt='';const sp=el('span');cap.append(im,sp);
+  tape(stage,`left:${r.x+r.w/2-65}px;top:${r.y-pad-16}px;transform:rotate(-3deg)`);
+  if(rot)p.style.transform=`rotate(${rot}deg)`;
+  return sp;
+}
+
+function chat(){
+  const cam={x:64,y:176,w:1248,h:702}, box={x:1360,y:176,w:496,h:740};
+  const OWN=P.get('chat')!=='0';
+  demoBox(cam,'Kamera');if(!OWN)demoBox(box,'Chat');
+  const d=put(stage,'desk');
+  const hole=(r,pad=0)=>`${r.x-pad}px ${r.y-pad}px,${r.x+r.w+pad}px ${r.y-pad}px,${r.x+r.w+pad}px ${r.y+r.h+pad}px,${r.x-pad}px ${r.y+r.h+pad}px,${r.x-pad}px ${r.y-pad}px,0 0`;
+  d.style.clipPath=`polygon(evenodd,0 0,1920px 0,1920px 1080px,0 1080px,0 0,${[hole(cam)].concat(OWN?[]:[hole(box)]).join(',')})`;
+  const cap=polaroid(cam,{pad:16,bottom:70});cycle(cap,[P.get('title')||'Just Chatting','Enter The Void','void.cx'],20000);
+  const hd=put(stage,'chathead');const t=put(hd,'t','<span></span>');t.firstChild.textContent='Just Chatting';
+  hd.style.display=P.get('title')?'none':'';
+  if(OWN){const n=put(stage,'notes','',`left:${box.x}px;top:${box.y-20}px;width:${box.w}px;height:${box.h+20}px`);
+    let i=0;chatInto(n,{max:14,render:m=>m.style.setProperty('--r',[-1.6,1.2,-.6,1.8,-1.1][i++%5]+'deg')})}
+  const g=put(stage,'goals','',`position:absolute;right:64px;top:40px;width:496px;flex-direction:row`);goalsInto(g);
+}
+
+function game(){
+  const pos=(P.get('cam')||'br').toLowerCase();
+  demoBox({x:0,y:0,w:1920,h:1080},'Spielbild','linear-gradient(160deg,#3f6b5a,#1f3340 55%,#3a2c4a)');
+  /* Notizzettel zum Spiel */
+  const g=P.get('game')||(TEST?'Pixel Pilgrim':''),dev=P.get('dev')||(TEST?'Studio Kiesel':''),st=P.get('status')||(TEST?'Demo':'');
+  if(g){const c=put(stage,'card nowcard');tape(c,'left:150px;top:-16px;transform:rotate(3deg)');
+    put(c,'k','Gerade gespielt');const n=put(c,'g');n.textContent=g;
+    if(dev){const d=put(c,'d');d.textContent='von '+dev}
+    if(st)sticker(stage,esc(st),`left:400px;top:120px;width:120px;height:120px;font-size:${st.length>8?18:24}px;--r:12deg;animation-delay:.4s`);
+    if(P.get('wish')==='1'||TEST)sticker(stage,'Auf die<br>Wunsch&shy;liste!','left:300px;top:200px;width:130px;height:130px;font-size:20px;--r:-10deg;background:var(--lilac);animation-delay:.8s','wish');
+  }
+  if(pos==='off')return;
+  const W=416,H=234,M=40,BOT=50;
+  const x=pos.includes('l')?M:1920-M-W, y=pos.includes('t')?M+16:1080-M-H-BOT+14;
+  demoBox({x,y,w:W,h:H},'Kamera');
+  const cap=polaroid({x,y,w:W,h:H},{pad:12,bottom:BOT});cycle(cap,list('sub',[P.get('title')||'Enter The Void','void.cx']),30000);
+  if(P.get('goals')!=='0'){
+    const hud=put(stage,'goals','',`position:absolute;left:${x}px;width:${W}px;`+(pos.includes('t')?`top:${y+H+BOT+30}px`:`bottom:${1080-y+40}px`));
+    const lb=put(hud,'goals empty');latestInto(lb);const gg=put(hud,'goals empty');goalsInto(gg);
+  }
+}
+
+/* ---------- Alert ---------- */
+async function alert(e,a){
+  const box=el('div','alert'+(a.big?' big':''));
+  const stk=put(box,'sticker stk');
+  stk.appendChild(makeMark({d:300,t:520,mono:a.big?'#1B1830':null}));
+  const lb=put(stk,'');lb.textContent=a.big?'Wow!':({follow:'Hallo!',sub:'Danke!',resub:'Treu!',gift:'Geschenk!',cheer:'Bits!',redeem:'Punkte!'}[e.type]||'Hey!');
+  const s=put(box,'slip');put(s,'k',a.kind);const n=put(s,'n');n.textContent=a.name;const d=put(s,'d');d.textContent=a.detail;
+  if(e.text){const m=put(s,'m');m.textContent=e.text}
+  alertBox.appendChild(box);
+  await wait(40);box.classList.add('in');a.sound();
+  await a.hold();
+  box.classList.add('out');await wait(650);box.remove();
+}
+
+/* ---------- Übergang ---------- */
+function stinger(root){
+  put(root,'in-sheet a');put(root,'in-sheet b');put(root,'in-sheet c');
+  [['Demo!','12%','18%','var(--sun)',-12],['Indie','76%','16%','var(--mint)',10],['GG','18%','68%','var(--coral)',8],['Play','74%','66%','var(--lilac)',-9]].forEach(([t,x,y,c,r],i)=>
+    put(root,'sticker in-stk',t,`left:${x};top:${y};background:${c};--r:${r}deg;animation-delay:${i*.04}s`));
+  const m=put(root,'in-mark');m.appendChild(makeMark({cls:'noglow',d:540,t:420}));
+}
+
+boot({start,pause,end,chat,game,stinger},{alert,samples:{chat:['Hallo zusammen!','Die Demo sieht mega aus','Wishlist ist raus','Der Pixel-Look ist so schön','Wann kommt der Release?','Spielst du noch mehr Demos heute?','Die Musik!']}});
+</script>
+</body>
+</html>

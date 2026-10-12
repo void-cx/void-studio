@@ -1,0 +1,43 @@
+{
+  "id": "indie",
+  "order": 8,
+  "label": "Indie Games & Demos",
+  "game": "Indie",
+  "capname": "Spielaufnahme",
+  "collname": "VOID × Indie",
+  "template": "themes/indie/scenes.html",
+  "core": true,
+  "layout": "game",
+  "cam": [1464, 770],
+  "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Spiel", "Entwickler", "Status", "Wunschliste", "Spiele des Abends"],
+  "param_example": "#game=Pixel%20Pilgrim&dev=Studio%20Kiesel&status=Demo&wish=1",
+  "fonts": {
+    "__PX5__": ["pixelify-sans-500.woff2", "fontsource-pixelify-sans/files/pixelify-sans-latin-500-normal.woff2"],
+    "__PX7__": ["pixelify-sans-700.woff2", "fontsource-pixelify-sans/files/pixelify-sans-latin-700-normal.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"],
+    "__SG7__": ["space-grotesk-700.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-700-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "pixelify-sans": "fontsource-pixelify-sans",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7600],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["pause", "scene=pause&test=1", 7600],
+    ["end", "scene=end&test=1", 9000]
+  ],
+  "readme": {
+    "name": "Indie Games & Demos",
+    "for": "für Indie Games und Demos",
+    "game_scenes": "Spiel-Overlay",
+    "stinger": "Drei Papierbögen fliegen von allen Seiten ins Bild, Sticker klatschen drauf und die Bildmarke landet als runder Aufkleber in der Mitte, dann wird alles wieder weggewischt",
+    "cam": "unten rechts als Polaroid",
+    "logo": "Start und Ende bauen die Bildmarke auf, jeder Alert klatscht sie als Sticker ins Bild."
+  }
+}

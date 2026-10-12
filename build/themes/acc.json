@@ -1,0 +1,39 @@
+{
+  "id": "acc",
+  "order": 7,
+  "label": "Assetto Corsa (Competizione & EVO)",
+  "game": "Assetto Corsa",
+  "template": "themes/acc/scenes.html",
+  "core": true,
+  "layout": "game",
+  "cam": [1472, 330],
+  "scenes": ["start", "pause", "end", "chat", "game"],
+  "infos": ["Strecke", "Auto", "Serie"],
+  "param_example": "#track=Spa-Francorchamps&car=BMW%20M4%20GT3",
+  "fonts": {
+    "__BC5__": ["barlow-condensed-500.woff2", "fontsource-barlow-condensed-5.3.0/files/barlow-condensed-latin-500-normal.woff2"],
+    "__BC7__": ["barlow-condensed-700.woff2", "fontsource-barlow-condensed-5.3.0/files/barlow-condensed-latin-700-normal.woff2"],
+    "__JB5__": ["jetbrains-mono-500.woff2", "fontsource-jetbrains-mono-5.3.0/files/jetbrains-mono-latin-500-normal.woff2"],
+    "__SG4__": ["space-grotesk-400.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-400-normal.woff2"],
+    "__SG5__": ["space-grotesk-500.woff2", "fontsource-space-grotesk-5.3.0/files/space-grotesk-latin-500-normal.woff2"]
+  },
+  "licenses": {
+    "space-grotesk": "fontsource-space-grotesk-5.3.0",
+    "barlow-condensed": "fontsource-barlow-condensed-5.3.0",
+    "jetbrains-mono": "fontsource-jetbrains-mono-5.3.0"
+  },
+  "previews": [
+    ["start", "scene=start&test=1", 7600],
+    ["chat", "scene=chat&demo=1&test=1", 8000],
+    ["game", "scene=game&demo=1&test=1", 4000],
+    ["pause", "scene=pause&test=1", 7600],
+    ["end", "scene=end&test=1", 7600]
+  ],
+  "readme": {
+    "name": "Assetto Corsa",
+    "stinger": "Ein Karbon-Wischer mit Zielflaggen-Kante fegt schräg durchs Bild, die Startampel zählt hoch, die Bildmarke baut sich auf – Lights out, raus geht es nach links",
+    "cam": "rechts mittig als Onboard-Kamera",
+    "logo": "Start, Pause und Ende bauen die Bildmarke in der Kopfleiste auf, jeder Alert im Seitenfeld. Bei Raids, ab 5 Geschenk-Abos und ab 1.000 Bits leuchten die Sektoren violett.",
+    "game_scenes": "Assetto-Corsa-Overlay"
+  }
+}

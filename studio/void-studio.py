@@ -4,6 +4,9 @@ VOID Studio – OBS-Skript (Werkzeuge → Skripte → +)
 Eins für alles:
   · Szenen-Packs verwalten: aus dem GitHub-Repo installieren, aktualisieren, entfernen
   · VOID Twitch Bridge: Alerts, Sounds, Chat, Ziele, letzte Unterstützer, Rückblick, Spiel-Telemetrie
+  · IRL: bei Verbindungsabbruch selbst auf „Verbindung weg“ schalten und zurück
+  · Infos aus OBS: Textquellen „Info · …“ in der Szene „VOID · Infos“ füllen die Overlays (Spielname, Ort, …)
+  · Szenensammlung direkt in OBS einrichten, ohne Import-Dialog
 
 Erster Start: Dieses Skript einmal in OBS hinzufügen. Es kopiert sich nach %APPDATA%/VOID-Bridge/void-studio.py;
 alle über VOID Studio installierten Szenensammlungen nutzen genau diese eine Kopie.
@@ -19,11 +22,11 @@ Updates: Packs (HTML, Schriften, Übergänge) per Knopfdruck, geprüft per SHA-2
 VOID Studio selbst wird nur angezeigt und erst nach Bestätigung eingespielt.
 """
 import obspython as obs
-import base64, collections, io, json, os, queue, socket, ssl, struct, threading, time, webbrowser
+import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threading, time, webbrowser
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.0.3"
+STUDIO_VERSION = "1.0.4"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -45,7 +48,7 @@ ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
-       "ignore": set(), "hide_cmd": True}
+       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
 gen = [0]
@@ -224,6 +227,72 @@ def telemetry_loop():
 
 
 # ---------------------------------------------------------------- Steuerung
+# ---------- IRL: Verbindungsabbruch erkennen und Szene wechseln ----------
+# Läuft im OBS-Takt (timer_add), nicht in einem eigenen Thread: Szenen dürfen nur von dort umgeschaltet werden.
+IRL_SCENE = "Verbindung weg"
+IRL_LIVE_SCENES = ("Unterwegs", "Zwei Kameras", "Bild im Bild", "Vier Kameras", "Just Chatting")
+irl = {"live": None, "since": None, "changed": 0.0, "prev": None}
+
+
+def irl_snapshot():
+    return {"type": "irl", "live": bool(irl["live"]), "since": irl["since"]}
+
+
+def source_live(name):
+    """True, wenn die Medienquelle läuft und Bild hat; None, wenn es sie in dieser Szenensammlung nicht gibt."""
+    src = obs.obs_get_source_by_name(name)
+    if not src:
+        return None
+    try:
+        return obs.obs_source_media_get_state(src) == obs.OBS_MEDIA_STATE_PLAYING and obs.obs_source_get_width(src) > 0
+    finally:
+        obs.obs_source_release(src)
+
+
+def current_scene_name():
+    src = obs.obs_frontend_get_current_scene()
+    if not src:
+        return None
+    try:
+        return obs.obs_source_get_name(src)
+    finally:
+        obs.obs_source_release(src)
+
+
+def switch_scene(name):
+    src = obs.obs_get_source_by_name(name)
+    if not src:
+        return False
+    try:
+        obs.obs_frontend_set_current_scene(src)
+        return True
+    finally:
+        obs.obs_source_release(src)
+
+
+def irl_tick():
+    try:
+        if not cfg["irl_auto"]:
+            return
+        live = source_live(cfg["irl_source"])
+        if live is None:
+            return
+        now = time.time()
+        if live != irl["live"]:
+            irl.update(live=live, changed=now, since=None if live else int(now))
+            send_all(irl_snapshot())                     # „Verbindung weg“ zeigt, seit wann, und meldet die Rückkehr
+        held = now - irl["changed"]
+        scene = current_scene_name()
+        if not live and held >= cfg["irl_delay"] and scene in IRL_LIVE_SCENES and switch_scene(IRL_SCENE):
+            irl["prev"] = scene
+            log(f"IRL: {cfg['irl_source']} ohne Signal – auf „{IRL_SCENE}“ geschaltet.")
+        elif live and held >= cfg["irl_back"] and scene == IRL_SCENE and irl["prev"] and switch_scene(irl["prev"]):
+            log(f"IRL: Signal wieder da – zurück auf „{irl['prev']}“.")
+            irl["prev"] = None
+    except Exception as e:                                # ein Fehler im Takt darf OBS nicht stören
+        log(f"IRL: {e}")
+
+
 def ctl_replay(*_):
     with lock:
         ev = state["last_alert"]
@@ -324,6 +393,10 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         q = queue.Queue()
         q.put(json.dumps(snapshot(), ensure_ascii=False))
+        if irl["live"] is not None:
+            q.put(json.dumps(irl_snapshot()))
+        if info["data"]:
+            q.put(json.dumps(info_snapshot(), ensure_ascii=False))
         if badges:
             q.put(json.dumps({"type": "badges", "map": badges}))
         with clients_lock:
@@ -834,8 +907,8 @@ def template_of(pdir):
     return None
 
 
-def make_import(pdir):
-    """import.json des Packs auf diesen Rechner zuschneiden: ./-Pfade (relativ zum Pack-Ordner) → absolute Pfade,
+def build_import(pdir):
+    """Szenensammlung des Packs für diesen Rechner: ./-Pfade (relativ zum Pack-Ordner) → absolute Pfade,
     Skript → zentrale Kopie."""
     tpl = template_of(pdir)
     if not tpl:
@@ -855,8 +928,229 @@ def make_import(pdir):
     data = walk(data)
     for s in data.get("modules", {}).get("scripts-tool", []):
         s["path"] = STUDIO_PATH.replace("\\", "/")
+    return data
+
+
+def make_import(pdir):
+    """import.json im Pack-Ordner, für den Import-Dialog von OBS."""
     with open(os.path.join(pdir, "import.json"), "w", encoding="utf-8") as f:
+        json.dump(build_import(pdir), f, ensure_ascii=False, indent=4)
+
+
+# ---------- Szenensammlung direkt in OBS einrichten ----------
+# OBS hat dafür keinen Skript-Aufruf; der Import-Dialog schreibt die Sammlung aber auch nur als JSON in den
+# Sammlungsordner. Genau das machen wir, mit den Geräte-Einstellungen einer schon vorhandenen Fassung.
+KEEP_KINDS = ("browser_source", "scene", "group")      # die kommen immer frisch aus dem Pack
+
+
+def obs_scenes_dir():
+    get = getattr(obs, "os_get_config_path_ptr", None)
+    d = get("obs-studio/basic/scenes") if get else None
+    if not d:
+        base = os.environ.get("APPDATA") or os.path.expanduser(
+            "~/Library/Application Support" if sys.platform == "darwin" else "~/.config")
+        d = os.path.join(base, "obs-studio", "basic", "scenes")
+    return d if os.path.isdir(d) else None
+
+
+def obs_collections(d):
+    """Sammlungen im Ordner: Name → Datei."""
+    out = {}
+    for fn in os.listdir(d):
+        if fn.endswith(".json"):
+            try:
+                with open(os.path.join(d, fn), encoding="utf-8") as f:
+                    out.setdefault(json.load(f).get("name"), os.path.join(d, fn))
+            except (OSError, ValueError):
+                pass
+    return out
+
+
+def merge_collection(new, old):
+    """Aus der alten Fassung übernehmen: Einstellungen gleichnamiger Geräte (Kamera, Spielaufnahme, Medienquellen,
+    Texte) und alles, was nicht aus dem Pack stammt (eigene Quellen und Szenen, die Infos)."""
+    olds = {s.get("name"): s for s in old.get("sources", [])}
+    names = {s["name"] for s in new["sources"]}
+    for s in new["sources"]:
+        o = olds.get(s["name"])
+        if o and o.get("id") == s["id"] and s["id"] not in KEEP_KINDS:
+            s["settings"] = o.get("settings", s["settings"])
+    extra = [s for n, s in olds.items() if n not in names]
+    new["sources"] += extra
+    new["scene_order"] += [{"name": s["name"]} for s in extra if s.get("id") == "scene"]
+    return new
+
+
+def setup_collection(pid, quiet=False):
+    """Sammlung des Packs in OBS anlegen oder erneuern; gibt ihren Namen zurück. quiet (nach dem Installieren):
+    nur neu anlegen, nie ersetzen, und nichts melden."""
+    pdir = os.path.join(PACKS_DIR, pid)
+
+    def fail(msg):
+        if not quiet:
+            mgr["notes"].append(msg)
+            log(msg)
+        return None
+    try:
+        data = build_import(pdir)
+    except Exception as e:
+        return fail(f"{pid}: Sammlung nicht erstellt: {e}")
+    name = data.get("name") or pid
+    d = obs_scenes_dir()
+    if not d:
+        return fail(f"OBS-Sammlungsordner nicht gefunden. Bitte von Hand importieren: Szenensammlung → Importieren → {pdir}{os.sep}import.json")
+    if obs.obs_frontend_get_current_scene_collection() == name:
+        return fail(f"„{name}“ ist gerade aktiv und lässt sich so nicht ersetzen. Kurz eine andere Szenensammlung wählen, dann noch einmal „In OBS einrichten“.")
+    path = obs_collections(d).get(name)
+    replaced = bool(path)
+    if path:
+        if quiet:
+            return None
+        with open(path, encoding="utf-8") as f:
+            data = merge_collection(data, json.load(f))
+        shutil.copy(path, path + ".bak")                 # vorherige Fassung zur Sicherheit
+    else:
+        stem = _re.sub(r"[^\w\- ]+", "_", name).strip("_ ") or "VOID"
+        path, n = os.path.join(d, stem + ".json"), 2
+        while os.path.exists(path):
+            path, n = os.path.join(d, f"{stem}_{n}.json"), n + 1
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
+    if not quiet:
+        msg = (f"„{name}“ ist in OBS {'erneuert (Kamera, Spielaufnahme und eigene Quellen übernommen)' if replaced else 'eingerichtet'}. "
+               f"Szenensammlung → {name}. Steht sie noch nicht im Menü, OBS einmal neu starten.")
+        mgr["notes"].append(msg)
+        log(msg)
+    return name
+
+
+# ---------- Infos aus OBS: Szene „VOID · Infos“ mit Textquellen „Info · …“ ----------
+INFO_SCENE = "VOID · Infos"
+INFO_PREFIX = "Info · "
+INFO_DEFAULT = ["Titel", "Statuszeilen"]
+INFO_HINT = ("Doppelklick auf eine Info-Quelle und Text eintragen – die Overlays übernehmen ihn sofort. "
+             "Leer = Standard. Mehrere Zeilen = Wechsel bzw. Liste. Diese Szene nicht live zeigen.")
+info = {"data": {}, "ticks": 0}
+info_lock = threading.Lock()
+
+
+def info_snapshot():
+    return {"type": "info", "data": info["data"]}
+
+
+def each_source(fn):
+    """fn(source) für jede Quelle; obs_enum_sources gibt eine Liste mit Referenzen zurück."""
+    lst = obs.obs_enum_sources() or []
+    try:
+        for src in lst:
+            fn(src)
+    finally:
+        if lst:
+            obs.source_list_release(lst)
+
+
+def source_text(src):
+    st = obs.obs_source_get_settings(src)
+    try:
+        return obs.obs_data_get_string(st, "text")
+    finally:
+        obs.obs_data_release(st)
+
+
+def info_tick():
+    """Texte der Info-Quellen lesen; bei einer Änderung an alle Szenen schicken."""
+    # ensure_infos läuft hier im OBS-Takt; Quellen anlegen ist dort erlaubt, die Oberfläche zieht nach
+    try:
+        info["ticks"] += 1
+        if info["ticks"] == 3:                    # einmal kurz nach dem Laden: die Sammlung ist dann vollständig da
+            ensure_infos()
+        data = {}
+        def read(src):
+            n = obs.obs_source_get_name(src) or ""
+            if n.startswith(INFO_PREFIX):
+                data[n[len(INFO_PREFIX):]] = source_text(src).strip()
+        each_source(read)
+        if data != info["data"]:
+            info["data"] = data
+            send_all(info_snapshot())
+    except Exception as e:
+        log(f"Infos: {e}")
+
+
+def active_pack():
+    """Pack der aktiven Sammlung, erkannt an den Browserquellen (…/packs/<id>/obs/…)."""
+    found = []
+    def look(src):
+        if not found and obs.obs_source_get_unversioned_id(src) == "browser_source":
+            st = obs.obs_source_get_settings(src)
+            m = _re.search(r"/packs/([^/]+)/obs/", obs.obs_data_get_string(st, "local_file").replace("\\", "/"))
+            obs.obs_data_release(st)
+            if m:
+                found.append(m.group(1))
+    each_source(look)
+    return found[0] if found else None
+
+
+def text_kind():
+    latest = getattr(obs, "obs_get_latest_input_type_id", None)
+    for kind in ("text_gdiplus", "text_ft2_source"):
+        k = latest(kind) if latest else None
+        if k:
+            return k
+    return None
+
+
+def ensure_infos(announce=False):
+    """Szene „VOID · Infos“ mit den Feldern des aktiven Packs anlegen bzw. ergänzen (vorhandene Texte bleiben)."""
+    with info_lock:
+        _ensure_infos(announce)
+
+
+def _ensure_infos(announce):
+    pid = active_pack()
+    if not pid:
+        return announce and log("Infos: Diese Szenensammlung gehört zu keinem VOID-Pack.")
+    labels = (installed(pid) or {}).get("infos") or INFO_DEFAULT
+    kind = text_kind()
+    if not kind:
+        return log("Infos: keine Textquelle in dieser OBS-Version gefunden.")
+    src = obs.obs_get_source_by_name(INFO_SCENE)
+    if src:
+        scene = obs.obs_scene_from_source(src)          # geliehen, gehört zu src
+    else:
+        scene = obs.obs_scene_create(INFO_SCENE)
+        src = obs.obs_source_get_ref(obs.obs_scene_get_source(scene))
+        obs.obs_scene_release(scene)
+        scene = obs.obs_scene_from_source(src)
+    added = []
+    try:
+        y = 40
+        for label in [None] + list(labels):
+            name = INFO_PREFIX + label if label else "Hinweis"
+            have = obs.obs_get_source_by_name(name)
+            if have:
+                obs.obs_source_release(have)
+            else:
+                st = obs.obs_data_create()
+                obs.obs_data_set_string(st, "text", "" if label else INFO_HINT)
+                obj = obs.obs_source_create(kind, name, st, None)
+                item = obs.obs_scene_add(scene, obj)
+                pos = obs.vec2()
+                pos.x, pos.y = 40.0, float(y)
+                obs.obs_sceneitem_set_pos(item, pos)
+                obs.obs_data_release(st)
+                obs.obs_source_release(obj)
+                added.append(label or name)
+            y += 60
+    finally:
+        obs.obs_source_release(src)
+    if added or announce:
+        log(f"Infos: Szene „{INFO_SCENE}“ " + (f"ergänzt um {', '.join(a for a in added if a != 'Hinweis')}." if added else "ist vollständig."))
+
+
+def on_frontend_event(event):
+    if event in (obs.OBS_FRONTEND_EVENT_FINISHED_LOADING, obs.OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED):
+        info["ticks"] = 0                       # nach dem Wechsel erneut prüfen (im Takt, wenn alles geladen ist)
 
 
 def install_pack(pid):
@@ -894,9 +1188,12 @@ def install_pack(pid):
         make_import(dest)
         new = installed(pid)
         if not old:
-            note = f"{info['name']} {info['version']} installiert. Einmal importieren: Szenensammlung → Importieren → {dest}{os.sep}import.json"
+            coll = setup_collection(pid, quiet=True)
+            note = (f"{info['name']} {info['version']} installiert und in OBS eingerichtet: Szenensammlung → {coll}. Steht sie noch nicht im Menü, OBS einmal neu starten."
+                    if coll else
+                    f"{info['name']} {info['version']} installiert. Jetzt „In OBS einrichten“ klicken oder importieren: Szenensammlung → Importieren → {dest}{os.sep}import.json")
         elif old.get("structure") != new.get("structure"):
-            note = f"{info['name']} auf {info['version']} aktualisiert. Die Szenen haben sich geändert – bitte import.json erneut importieren."
+            note = f"{info['name']} auf {info['version']} aktualisiert. Die Szenen haben sich geändert – bitte „In OBS einrichten“ (Kamera und Spielaufnahme bleiben)."
         else:
             note = f"{info['name']} auf {info['version']} aktualisiert. Kein neuer Import nötig."
         mgr["notes"].append(note)
@@ -1012,6 +1309,21 @@ def ui_remove(props, prop):
     return True
 
 
+def ui_setup(props, prop):
+    pid = selected(props)
+    if pid and installed(pid):
+        setup_collection(pid)
+    elif pid:
+        log("Erst installieren, dann einrichten.")
+    fill_packs(props)
+    return True
+
+
+def ui_infos(props, prop):
+    ensure_infos(announce=True)
+    return True
+
+
 def ui_open(props, prop):
     pid = selected(props)
     d = os.path.join(PACKS_DIR, pid) if pid and os.path.isdir(os.path.join(PACKS_DIR, pid)) else PACKS_DIR
@@ -1064,6 +1376,9 @@ def script_defaults(settings):
     obs.obs_data_set_default_bool(settings, "hide_cmd", True)
     obs.obs_data_set_default_string(settings, "ignore", "streamelements, nightbot, streamlabs, moobot")
     obs.obs_data_set_default_string(settings, "tele_url", "http://127.0.0.1:25555/api/ets2/telemetry")
+    obs.obs_data_set_default_string(settings, "irl_source", "Kamera 1")
+    obs.obs_data_set_default_int(settings, "irl_delay", 3)
+    obs.obs_data_set_default_int(settings, "irl_back", 5)
 
 
 def studio_head():
@@ -1138,9 +1453,16 @@ def script_properties():
     def packs(g):
         tip(obs.obs_properties_add_list(g, "pack", "Pack", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING),
             "Pack auswählen, dann installieren, aktualisieren, Ordner öffnen oder entfernen.")
-        obs.obs_properties_add_button(g, "m_install", "Installieren / aktualisieren", ui_install)
+        tip(obs.obs_properties_add_button(g, "m_install", "Installieren / aktualisieren", ui_install),
+            "Ein neues Pack wird dabei gleich als Szenensammlung in OBS eingerichtet.")
+        tip(obs.obs_properties_add_button(g, "m_setup", "In OBS einrichten", ui_setup),
+            "Legt die Szenensammlung des Packs in OBS an oder erneuert sie nach einem Update. "
+            "Kamera, Spielaufnahme und eigene Quellen bleiben. Nicht für die gerade aktive Sammlung.")
+        tip(obs.obs_properties_add_button(g, "m_infos", "Infos-Szene anlegen", ui_infos),
+            "Szene „VOID · Infos“ mit Textquellen für Titel, Spielname, Ort … in der aktiven Sammlung. "
+            "Entsteht sonst beim Laden von selbst.")
         tip(obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (import.json)", ui_open),
-            "Darin liegt import.json für OBS: Szenensammlung → Importieren.")
+            "Darin liegt import.json, falls du lieber über Szenensammlung → Importieren gehst.")
         obs.obs_properties_add_button(g, "m_remove", "Entfernen", ui_remove)
         obs.obs_properties_add_button(g, "m_check", "Nach Updates suchen", ui_check)
         obs.obs_properties_add_button(g, "m_all", "Alle Pack-Updates installieren", ui_install_all)
@@ -1198,6 +1520,15 @@ def script_properties():
         tip(obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT),
             "Funbit-Format, z. B. http://127.0.0.1:25555/api/ets2/telemetry")
 
+    def irl_group(g):
+        tip(obs.obs_properties_add_bool(g, "irl_auto", "Bei Abbruch auf „Verbindung weg“ schalten"),
+            "Nur aus den Kamera-Szenen (Unterwegs, Zwei Kameras, Bild im Bild, Vier Kameras, Just Chatting); "
+            "kommt das Signal zurück, geht es in die Szene von vorher.")
+        tip(obs.obs_properties_add_text(g, "irl_source", "Kamera-Quelle", obs.OBS_TEXT_DEFAULT),
+            "Name der Medienquelle, die überwacht wird. Standard: Kamera 1")
+        obs.obs_properties_add_int(g, "irl_delay", "Umschalten nach (Sekunden)", 1, 60, 1)
+        obs.obs_properties_add_int(g, "irl_back", "Zurück nach stabilem Signal (Sekunden)", 1, 60, 1)
+
     def tech(g):
         tip(obs.obs_properties_add_int(g, "port", "Lokaler Port", 1024, 65535, 1),
             "Über diesen Port holen sich die Szenen die Live-Daten. Nur ändern, wenn 8787 belegt ist.")
@@ -1205,7 +1536,8 @@ def script_properties():
             "GitHub owner/repo oder eine eigene URL. Standard: " + DEFAULT_REPO)
 
     group(p, "g_packs", "Szenen-Packs",
-          "Packs installieren und aktuell halten. Nach dem ersten Installieren die Szenensammlung einmal in OBS importieren.", packs)
+          "Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Texte wie Spielname oder Ort "
+          "trägst du in OBS in der Szene „VOID · Infos“ ein.", packs)
     group(p, "g_twitch", "Twitch", None, twitch)
     group(p, "g_alerts", "Alerts",
           "Einblendung mit Sound bei Follow, Abo, Bits, Raid und Kanalpunkten. Eigene Sounds: " + SOUND_DIR, alerts)
@@ -1214,6 +1546,7 @@ def script_properties():
     group(p, "g_scenes", "Spielszenen und Rückblick", None, scenes)
     group(p, "g_chat", "Chat", None, chat)
     group(p, "g_tele", "Telemetrie (ETS2/ATS)", "Für die Szene „ETS2 Telemetrie“; braucht einen laufenden Telemetrie-Server.", telemetry)
+    group(p, "g_irl", "IRL", "Für das IRL-Pack: überwacht die Kamera-Quelle und schaltet bei einem Abbruch selbst um.", irl_group)
     group(p, "g_tech", "Technik", None, tech)
     fill_packs(p)
     return p
@@ -1249,6 +1582,9 @@ def script_update(settings):
                show_latest=obs.obs_data_get_bool(settings, "show_latest"),
                latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
                tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
+               irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
+               irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
+               irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
                ignore={n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()})
     if port_changed:
         start_server()
@@ -1275,6 +1611,9 @@ def script_load(settings):
                 log(f"{pid}: import.json nicht erzeugt: {e}")
     in_thread(check_updates)
     threading.Thread(target=telemetry_loop, daemon=True).start()
+    obs.timer_add(irl_tick, 500)
+    obs.timer_add(info_tick, 1000)
+    obs.obs_frontend_add_event_callback(on_frontend_event)
     log(f"Daten und Sounds: {DATA_DIR}")
     load_state()
     for key, desc, fn in HOTKEYS:
@@ -1294,6 +1633,9 @@ def script_save(settings):
 
 
 def script_unload():
+    obs.timer_remove(irl_tick)
+    obs.timer_remove(info_tick)
+    obs.obs_frontend_remove_event_callback(on_frontend_event)
     stop.set()
     stop_eventsub()
     stop_server()
