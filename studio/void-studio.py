@@ -27,13 +27,14 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.1.1"
+STUDIO_VERSION = "1.1.2"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~/.config"), "VOID-Bridge")
 TOKEN_FILE = os.path.join(DATA_DIR, "void-twitch-token.json")
 STATE_FILE = os.path.join(DATA_DIR, "void-bridge-state.json")
+SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")   # Einstellungen für alle Szenensammlungen gemeinsam
 SOUND_DIR = os.path.join(DATA_DIR, "sounds")
 PACKS_DIR = os.path.join(DATA_DIR, "packs")
 STUDIO_PATH = os.path.join(DATA_DIR, "void-studio.py")
@@ -526,23 +527,27 @@ def web_infos(body):
 
 
 def web_settings(body):
-    st = settings_ref[0]
-    if st is None:
-        raise RuntimeError("Einstellungen noch nicht geladen")
+    """Änderungen aus der Oberfläche: zentral speichern, gelten sofort in allen Szenen und Sammlungen."""
+    vals = {}
     for k, v in body.items():
         if k in BOOL_SETTINGS:
-            obs.obs_data_set_bool(st, k, bool(v))
+            vals[k] = bool(v)
         elif k in INT_SETTINGS:
             lo, hi = INT_SETTINGS[k]
-            obs.obs_data_set_int(st, k, max(lo, min(hi, int(v))))
+            vals[k] = max(lo, min(hi, int(v)))
         elif k in STR_SETTINGS:
-            obs.obs_data_set_string(st, k, str(v)[:300])
+            vals[k] = str(v)[:300].strip() or cfg[k]
         elif k == "ignore":
-            obs.obs_data_set_string(st, "ignore", str(v)[:2000])
+            vals[k] = sorted({n.strip().lower() for n in str(v)[:2000].split(",") if n.strip()})
         elif k == "latest_items":
-            for key in LATEST_KEYS:
-                obs.obs_data_set_bool(st, "latest_" + key, key in (v or []))
-    script_update(st, defer_restart=True)
+            vals[k] = [x for x in LATEST_KEYS if x in (v or [])]
+    before = (cfg["port"], cfg["remote_on"])
+    apply_settings(vals)
+    save_global()
+    sync_window(settings_ref[0])
+    if (cfg["port"], cfg["remote_on"]) != before:
+        threading.Timer(0.5, start_server).start()      # erst antworten, dann neu binden
+    push_state()
 
 
 def web_control(action, pid=None, local=False):
@@ -1719,31 +1724,94 @@ def on_logout(props, prop):
     return False
 
 
-def script_update(settings, defer_restart=False):
-    """defer_restart: aus einer Anfrage der Oberfläche – den Server erst nach der Antwort neu starten."""
-    settings_ref[0] = settings
-    cfg["repo"] = obs.obs_data_get_string(settings, "repo").strip() or DEFAULT_REPO
+# ---------- Einstellungen: zentral statt pro Szenensammlung ----------
+# OBS speichert Skript-Einstellungen pro Szenensammlung; beim Wechsel lädt das Skript neu und hätte andere Ziele,
+# Lautstärke usw. Darum liegen sie in settings.json. Im OBS-Fenster stehen nur noch Port, Pack-Quelle und der
+# Heimnetz-Schalter; Änderungen dort landen ebenfalls hier.
+GLOBAL_KEYS = ("port", "remote_on", "repo", "volume", "goal_follow", "goal_sub", "goal_bits", "hide_cmd", "tele_on",
+               "show_latest", "latest_items", "tele_url", "irl_auto", "irl_source", "irl_delay", "irl_back", "ignore")
+WINDOW_KEYS = ("port", "repo", "remote_on")
+glob = {"loaded": None, "synced": False}
+
+
+def read_obs(settings):
+    """Werte aus den Skript-Einstellungen dieser Sammlung (nur noch für die Übernahme und das OBS-Fenster)."""
     g = lambda k: obs.obs_data_get_int(settings, k)
-    port = g("port")
-    remote = obs.obs_data_get_bool(settings, "remote_on")
-    port_changed = port != cfg["port"] or remote != cfg["remote_on"] or server[0] is None
-    first = started[0] is None
-    cfg.update(port=port, remote_on=remote, volume=g("volume"), goal_follow=g("goal_follow"),
-               goal_sub=g("goal_sub"), goal_bits=g("goal_bits"),
-               hide_cmd=obs.obs_data_get_bool(settings, "hide_cmd"),
-               tele_on=obs.obs_data_get_bool(settings, "tele_on"),
-               show_latest=obs.obs_data_get_bool(settings, "show_latest"),
-               latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
-               tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
-               irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
-               irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
-               irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
-               ignore={n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()})
-    if port_changed and defer_restart:
+    return dict(port=g("port"), remote_on=obs.obs_data_get_bool(settings, "remote_on"),
+                repo=obs.obs_data_get_string(settings, "repo").strip() or DEFAULT_REPO,
+                volume=g("volume"), goal_follow=g("goal_follow"), goal_sub=g("goal_sub"), goal_bits=g("goal_bits"),
+                hide_cmd=obs.obs_data_get_bool(settings, "hide_cmd"), tele_on=obs.obs_data_get_bool(settings, "tele_on"),
+                show_latest=obs.obs_data_get_bool(settings, "show_latest"),
+                latest_items=[k for k in LATEST_KEYS if obs.obs_data_get_bool(settings, "latest_" + k)],
+                tele_url=obs.obs_data_get_string(settings, "tele_url").strip() or cfg["tele_url"],
+                irl_auto=obs.obs_data_get_bool(settings, "irl_auto"),
+                irl_source=obs.obs_data_get_string(settings, "irl_source").strip() or "Kamera 1",
+                irl_delay=max(1, g("irl_delay")), irl_back=max(1, g("irl_back")),
+                ignore=sorted({n.strip().lower() for n in obs.obs_data_get_string(settings, "ignore").split(",") if n.strip()}))
+
+
+def load_global():
+    try:
+        with open(SETTINGS_FILE, encoding="utf-8") as f:
+            data = json.load(f)
+        return {k: data[k] for k in GLOBAL_KEYS if k in data}
+    except (OSError, ValueError):
+        return None
+
+
+def save_global():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    out = {k: (sorted(cfg[k]) if k == "ignore" else cfg[k]) for k in GLOBAL_KEYS}
+    tmp = SETTINGS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, SETTINGS_FILE)
+
+
+def apply_settings(values):
+    for k, v in values.items():
+        if k in GLOBAL_KEYS:
+            cfg[k] = set(v) if k == "ignore" else v
+
+
+def sync_window(settings):
+    """Die Felder im OBS-Fenster zeigen die zentralen Werte."""
+    if settings is not None:
+        obs.obs_data_set_int(settings, "port", cfg["port"])
+        obs.obs_data_set_string(settings, "repo", cfg["repo"])
+        obs.obs_data_set_bool(settings, "remote_on", cfg["remote_on"])
+
+
+def script_update(settings, defer_restart=False):
+    """Beim Laden und bei Änderungen im OBS-Fenster. defer_restart: aus der Oberfläche – Server erst nach der Antwort
+    neu starten."""
+    settings_ref[0] = settings
+    before = (cfg["port"], cfg["remote_on"])
+    vals = read_obs(settings)
+    if glob["loaded"] is None:
+        glob["loaded"] = load_global()
+        if glob["loaded"] is None:                       # erstes Mal: Einstellungen dieser Sammlung übernehmen
+            vals["irl_auto"] = True                      # schaltet nur in IRL-Szenen um, darf überall an sein
+            apply_settings(vals)
+            save_global()
+            log("Einstellungen gelten jetzt für alle Szenensammlungen (settings.json).")
+            glob["loaded"] = {}
+        else:
+            apply_settings(glob["loaded"])
+    if not glob["synced"]:                               # beim Laden: Fenster auf die zentralen Werte setzen
+        glob["synced"] = True
+        sync_window(settings)
+    else:                                                # später: Änderung im OBS-Fenster
+        changed = {k: vals[k] for k in WINDOW_KEYS if vals[k] != cfg[k]}
+        if changed:
+            apply_settings(changed)
+            save_global()
+    restart = (cfg["port"], cfg["remote_on"]) != before or server[0] is None
+    if restart and defer_restart:
         threading.Timer(0.5, start_server).start()
-    elif port_changed:
+    elif restart:
         start_server()
-    if first:                            # Twitch-Verbindung einmal beim Laden starten
+    if started[0] is None:                               # Twitch-Verbindung einmal beim Laden starten
         started[0] = True
         start_eventsub()
     push_state()
