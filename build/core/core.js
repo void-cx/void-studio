@@ -164,7 +164,7 @@ async function nextAlert(){
   while(STATE.paused)await wait(300);
   const e=AQ.shift(),f0=FMT[e.type](e),kind=(e.texts&&e.texts[0])||f0[0],detail=(e.texts&&e.texts[1])||f0[1];
   try{await THEME.alert(e,{kind,detail,big:isBig(e),name:(e.user||'Anonym').slice(0,25),
-    hold:async()=>{await holdFor(e.text?8000:5500);skipNow=null},sound:()=>playSound(e.type)})}catch(_){}
+    hold:async()=>{await holdFor(e.hold||(e.text?8000:5500));skipNow=null},sound:()=>e.sound?playUrl(e.sound):playSound(e.type)})}catch(_){}
   await wait(500);nextAlert();
 }
 
@@ -300,6 +300,8 @@ function applyInfo(d){
   go();
 }
 
+/*@OVERLAY@*/
+
 /* ---------- Verbindung zur Bridge ---------- */
 function onMessage(e){
   switch(e.type){
@@ -314,6 +316,7 @@ function onMessage(e){
     case 'irl':hooks.irl.forEach(f=>f(e));break;
     case 'infos':if(PACK_ID&&e.packs)applyInfo(withTimers(e.packs[PACK_ID]||{},e.timers));break;
     case 'sound':playUrl(e.url);break;
+    case 'overlay':if(e.o)ovlHost(e.o);break;
     default:pushAlert(e);
   }
 }

@@ -44,6 +44,9 @@ SCOPES = ("moderator:read:followers channel:read:subscriptions bits:read "
           "channel:read:redemptions user:read:chat")
 EVENTSUB_URL = "wss://eventsub.wss.twitch.tv/ws?keepalive_timeout_seconds=30"
 SOUND_EXT = {".mp3": "audio/mpeg", ".ogg": "audio/ogg", ".wav": "audio/wav"}
+MEDIA_DIR = os.path.join(DATA_DIR, "media")             # Bilder und Videos für Einblendungen
+MEDIA_EXT = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+             ".webm": "video/webm", ".mp4": "video/mp4"}
 CLIENT_ID = "r95fjm0m90hk3kslgnjn8y2b8ygx4n"   # öffentliche Twitch-App (Client-Typ Public)
 ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 
@@ -51,7 +54,7 @@ LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
        "ignore": set(), "hide_cmd": True, "irl_auto": True, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
-       "remote_on": False, "alerts": {}, "rewards": []}
+       "remote_on": False, "alerts": {}, "rewards": [], "overlays": []}
 web = {"key": None, "log": collections.deque(maxlen=40), "device": None}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
@@ -173,7 +176,7 @@ def record(ev):
     push_state()
 
 
-ALERT_DEFAULT = {"on": True, "volume": 100, "min": 0, "kind": "", "detail": ""}
+ALERT_DEFAULT = {"on": True, "volume": 100, "min": 0, "kind": "", "detail": "", "overlay": ""}   # overlay: statt Standard-Alert
 MIN_ALERTS = ("cheer", "gift", "raid")                 # Mindestwert gilt für Bits, Geschenk-Abos, Raid-Größe
 
 
@@ -181,17 +184,21 @@ def alert_cfg(t):
     return dict(ALERT_DEFAULT, **(cfg["alerts"].get(t) or {}))
 
 
-def alert_texts(ev, ac):
-    """Eigene Überschrift/Zeile mit Platzhaltern {name} {anzahl} {monate} {stufe} {belohnung}; leer = Standard des Packs."""
+def fill(tpl, ev):
+    """Platzhalter {name} {anzahl} {monate} {stufe} {belohnung} {eingabe} {kosten}; kaputte Vorlagen bleiben wie sie sind."""
     vals = collections.defaultdict(str, name=ev.get("user", ""), anzahl=ev.get("amount", "") or "",
                                    monate=ev.get("months", "") or "", stufe=ev.get("tier", "") or "",
-                                   belohnung=ev.get("title", "") or "")
-    def fmt(tpl):
-        try:
-            return tpl.format_map(vals) if tpl else ""
-        except (ValueError, IndexError, AttributeError):
-            return tpl
-    kind, detail = fmt(ac["kind"]), fmt(ac["detail"])
+                                   belohnung=ev.get("title", "") or "", eingabe=ev.get("text", "") or "",
+                                   kosten=ev.get("cost", "") or "")
+    try:
+        return tpl.format_map(vals) if tpl else ""
+    except (ValueError, IndexError, AttributeError):
+        return tpl
+
+
+def alert_texts(ev, ac):
+    """Eigene Überschrift/Zeile; leer = Standard des Packs."""
+    kind, detail = fill(ac["kind"], ev), fill(ac["detail"], ev)
     return [kind, detail] if kind or detail else None
 
 
@@ -202,7 +209,7 @@ def alert(ev, count=True, test=False):
     rule = reward_rule(ev) if t == "redeem" and count else None
     show = test or (ac["on"] and not (t in MIN_ALERTS and (ev.get("amount") or 0) < ac["min"])
                     and not (rule and not rule.get("alert", True)))
-    if show:
+    if show and not show_overlay(ac["overlay"], ev):
         texts = alert_texts(ev, ac)
         send_all(dict(ev, texts=texts) if texts else ev)
     log(f"Alert: {t} – {ev.get('user')}" + ("" if count else " (Test/Wiederholung)") + ("" if show else " – ausgeblendet"))
@@ -539,6 +546,7 @@ def web_state():
         "alerts": {t: alert_cfg(t) for t in ALERT_TYPES},
         "sounds": sound_files(),
         "rewards": cfg["rewards"], "reward_titles": web["rewards"],
+        "overlays": cfg["overlays"], "media": media_files(),
         "listeners": len(clients),
     }
 
@@ -585,7 +593,8 @@ def web_settings(body):
                     cur = alert_cfg(t)
                     cur.update(on=bool(a.get("on", cur["on"])), volume=max(0, min(100, int(a.get("volume", cur["volume"])))),
                                min=max(0, min(10000000, int(a.get("min", cur["min"])))),
-                               kind=str(a.get("kind", cur["kind"]))[:120], detail=str(a.get("detail", cur["detail"]))[:160])
+                               kind=str(a.get("kind", cur["kind"]))[:120], detail=str(a.get("detail", cur["detail"]))[:160],
+                               overlay=str(a.get("overlay", cur["overlay"]) or "")[:12])
                     alerts[t] = cur
             vals[k] = alerts
         elif k == "rewards" and isinstance(v, list):
@@ -593,9 +602,20 @@ def web_settings(body):
             for r in v[:50]:
                 if isinstance(r, dict) and str(r.get("reward", "")).strip():
                     clean.append({"reward": str(r["reward"]).strip()[:80], "alert": bool(r.get("alert", True)),
+                                  "overlay": str(r.get("overlay") or "")[:12],
                                   "sound": os.path.basename(str(r.get("sound") or ""))[:80],
                                   "scene": str(r.get("scene") or "")[:120], "scene_secs": max(0, min(3600, int(r.get("scene_secs") or 0))),
                                   "source": str(r.get("source") or "")[:120], "source_secs": max(0, min(3600, int(r.get("source_secs") or 0)))})
+            vals[k] = clean
+        elif k == "overlays" and isinstance(v, list):
+            clean, seen = [], set()
+            for o in v[:30]:
+                if isinstance(o, dict):
+                    o = overlay_clean(o)
+                    if o["id"] in seen:
+                        o["id"] = "o" + os.urandom(3).hex()
+                    seen.add(o["id"])
+                    clean.append(o)
             vals[k] = clean
     before = (cfg["port"], cfg["remote_on"])
     apply_settings(vals)
@@ -624,6 +644,12 @@ def web_control(action, pid=None, local=False, body=None):
         return sound_delete(str(pid))
     elif action == "rewards_load":
         return rewards_load()
+    elif action == "overlay_test":
+        if not show_overlay(str(pid or ""), dict(SAMPLES["redeem"], text="Ein Hoch auf den Chat!")):
+            raise ValueError("Einblendung erst speichern")
+        return None
+    elif action == "media_delete" and pid:
+        return media_delete(str(pid))
     elif action == "twitch_login":
         threading.Thread(target=device_login, args=(local,), daemon=True).start()
     elif action == "twitch_logout":
@@ -878,8 +904,93 @@ def sound_delete(fn):
     return f"Sound entfernt: {fn}"
 
 
+# ---------- Einblendungen: Vorlage + Position, Größe, Texte, Bild/Video, Farbe, Animation, Dauer, Sound ----------
+# Die Overlays aller Packs zeigen sie (build/core/overlay.js); „pack“ = Alert im Stil des Packs mit eigenen Texten.
+OVERLAY_TEMPLATES = ("pack", "card", "banner", "media", "text")
+OVERLAY_DEFAULT = {"id": "", "name": "Einblendung", "template": "card", "pos": "tc", "margin": 48, "size": "m", "width": 480,
+                   "title": "{name}", "line": "{belohnung}", "media": "", "color": "", "bg": "glass", "anim": "slide",
+                   "secs": 6, "sound": "", "volume": 100}
+
+
+def overlay_clean(o):
+    d = dict(OVERLAY_DEFAULT)
+    pick = lambda k, ok: o[k] if k in o and ok(o[k]) else d[k]
+    d.update(
+        id=_re.sub(r"[^a-z0-9]", "", str(o.get("id") or "").lower())[:12] or "o" + os.urandom(3).hex(),
+        name=str(o.get("name") or d["name"]).strip()[:60] or d["name"],
+        template=pick("template", lambda v: v in OVERLAY_TEMPLATES),
+        pos=pick("pos", lambda v: isinstance(v, str) and len(v) == 2 and v[0] in "tmb" and v[1] in "lcr"),
+        size=pick("size", lambda v: v in ("s", "m", "l", "custom")),
+        bg=pick("bg", lambda v: v in ("solid", "glass", "none")),
+        anim=pick("anim", lambda v: v in ("slide", "fade", "pop")),
+        color=pick("color", lambda v: v == "" or bool(_re.fullmatch(r"#[0-9a-fA-F]{6}", str(v)))),
+        title=str(o.get("title", d["title"]))[:160], line=str(o.get("line", d["line"]))[:240],
+        media=os.path.basename(str(o.get("media") or ""))[:80], sound=os.path.basename(str(o.get("sound") or ""))[:80])
+    for k, lo, hi in (("margin", 0, 600), ("width", 16, 1920), ("secs", 1, 120), ("volume", 0, 100)):
+        try:
+            d[k] = max(lo, min(hi, int(o.get(k, d[k]))))
+        except (TypeError, ValueError):
+            pass
+    return d
+
+
+def overlay_by_id(oid):
+    return next((o for o in cfg["overlays"] if oid and o.get("id") == oid), None)
+
+
+def show_overlay(oid, ev):
+    """Einblendung mit den Werten des Ereignisses an alle Szenen; False, wenn es sie nicht (mehr) gibt."""
+    o = overlay_by_id(oid)
+    if not o:
+        return False
+    out = dict(o, title=fill(o["title"], ev), line=fill(o["line"], ev), user=ev.get("user", ""), event=ev.get("type"))
+    out["media"] = media_url(o["media"]) if o["media"] and os.path.isfile(os.path.join(MEDIA_DIR, o["media"])) else ""
+    out["video"] = os.path.splitext(o["media"])[1].lower() in (".webm", ".mp4")
+    out["sound"] = sound_url(o["sound"]) if o["sound"] and os.path.isfile(os.path.join(SOUND_DIR, o["sound"])) else ""
+    send_all({"type": "overlay", "o": out})
+    log(f"Einblendung: {o['name']}")
+    return True
+
+
+def media_url(fn):
+    return f"http://127.0.0.1:{cfg['port']}/media/{urllib.parse.quote(fn)}"
+
+
+def media_files():
+    if not os.path.isdir(MEDIA_DIR):
+        return []
+    return [{"file": fn, "url": media_url(fn), "video": os.path.splitext(fn)[1].lower() in (".webm", ".mp4")}
+            for fn in sorted(os.listdir(MEDIA_DIR)) if os.path.splitext(fn)[1].lower() in MEDIA_EXT]
+
+
+def media_upload(body):
+    """{filename, data (Base64)} – Bilder und kurze Videos bis 15 MB in den Ordner media/."""
+    stem, ext = os.path.splitext(os.path.basename(str(body.get("filename") or "")))
+    ext = ext.lower()
+    if ext not in MEDIA_EXT:
+        raise ValueError("Nur PNG, JPG, GIF, WEBP, WEBM oder MP4")
+    blob = base64.b64decode(str(body.get("data") or ""), validate=True)
+    if not 0 < len(blob) <= 15 * 1024 * 1024:
+        raise ValueError("Datei leer oder größer als 15 MB")
+    os.makedirs(MEDIA_DIR, exist_ok=True)
+    target = (_re.sub(r"[^a-z0-9_-]+", "-", stem.lower()).strip("-")[:40] or "bild") + ext
+    with open(os.path.join(MEDIA_DIR, target), "wb") as f:
+        f.write(blob)
+    return target
+
+
+def media_delete(fn):
+    fn = os.path.basename(fn)
+    p = os.path.join(MEDIA_DIR, fn)
+    if os.path.splitext(fn)[1].lower() not in MEDIA_EXT or not os.path.isfile(p):
+        raise ValueError("Datei nicht gefunden")
+    os.remove(p)
+    return f"Entfernt: {fn}"
+
+
 # ---------- Kanalpunkte → Aktionen (frei konfigurierbar in der Oberfläche) ----------
-# Regel: {reward, alert (an/aus), sound (Datei), scene + scene_secs (0 = bleiben), source + source_secs (einblenden)}
+# Regel: {reward, alert (an/aus), overlay (Einblendung), sound (Datei), scene + scene_secs (0 = bleiben),
+#         source + source_secs (einblenden)}
 def reward_rule(ev):
     title = (ev.get("title") or "").strip().lower()
     return next((r for r in cfg["rewards"] if r.get("reward", "").strip().lower() == title and title), None)
@@ -908,6 +1019,8 @@ def set_source_visible(name, visible):
 
 def run_reward(rule, ev):
     log(f"Kanalpunkte: „{rule.get('reward')}“ von {ev.get('user')}")
+    if rule.get("overlay"):
+        show_overlay(rule["overlay"], ev)
     if rule.get("sound"):
         send_all({"type": "sound", "url": sound_url(rule["sound"])})
     if rule.get("scene"):
@@ -985,13 +1098,14 @@ class Handler(BaseHTTPRequestHandler):
             if sample:
                 alert(dict(sample), count=False)
             return self.reply(200 if sample else 404, b"ok" if sample else b"unbekannt", "text/plain")
-        if path.startswith("/sounds/"):
-            name = os.path.basename(urllib.parse.unquote(path[8:]))
+        if path.startswith(("/sounds/", "/media/")):
+            folder, types = (SOUND_DIR, SOUND_EXT) if path.startswith("/sounds/") else (MEDIA_DIR, MEDIA_EXT)
+            name = os.path.basename(urllib.parse.unquote(path.split("/", 2)[2]))
             ext = os.path.splitext(name)[1].lower()
-            fp = os.path.join(SOUND_DIR, name)
-            if ext in SOUND_EXT and os.path.isfile(fp):
+            fp = os.path.join(folder, name)
+            if ext in types and os.path.isfile(fp):
                 with open(fp, "rb") as f:
-                    return self.reply(200, f.read(), SOUND_EXT[ext])
+                    return self.reply(200, f.read(), types[ext])
             return self.reply(404, b"nicht gefunden", "text/plain")
         if path in ("/", "/status"):
             with clients_lock:
@@ -1024,7 +1138,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            limit = 8 * 1024 * 1024 if path == "/api/sound" else 65536
+            limit = {"/api/sound": 8, "/api/media": 21}.get(path, 0) * 1024 * 1024 or 262144
             if n > limit:
                 raise ValueError("zu groß")
             body = json.loads(self.rfile.read(n).decode("utf-8") if n > 0 else "{}")
@@ -1039,6 +1153,9 @@ class Handler(BaseHTTPRequestHandler):
                 web_settings(body)
             elif path == "/api/sound":
                 return self.json(200, {"ok": True, "message": sound_upload(body), "state": web_state()})
+            elif path == "/api/media":
+                fn = media_upload(body)
+                return self.json(200, {"ok": True, "message": f"Gespeichert: {fn}", "file": fn, "state": web_state()})
             elif path == "/api/control":
                 msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1", body=body)
                 return self.json(200, {"ok": True, "message": msg, "state": web_state()})
@@ -1382,7 +1499,7 @@ def normalize(typ, ev):
                 "amount": ev.get("viewers", 0)}
     if typ == "channel.channel_points_custom_reward_redemption.add":
         return {"type": "redeem", "user": name, "title": (ev.get("reward") or {}).get("title", ""),
-                "text": ev.get("user_input", "")}
+                "text": ev.get("user_input", ""), "cost": (ev.get("reward") or {}).get("cost", 0)}
     return None
 
 
@@ -1494,7 +1611,7 @@ SAMPLES = {
     "gift": {"type": "gift", "user": "Lichtbringerin", "amount": 5, "tier": 1},
     "cheer": {"type": "cheer", "user": "Runenleser", "amount": 500, "text": "Für neue Server-Hardware"},
     "raid": {"type": "raid", "user": "VOIDCrew", "amount": 23},
-    "redeem": {"type": "redeem", "user": "Sternenstaub", "title": "Trink was!", "text": ""},
+    "redeem": {"type": "redeem", "user": "Sternenstaub", "title": "Trink was!", "text": "", "cost": 500},
 }
 
 
@@ -2089,7 +2206,7 @@ def on_logout(props, prop):
 # Heimnetz-Schalter; Änderungen dort landen ebenfalls hier.
 GLOBAL_KEYS = ("port", "remote_on", "repo", "volume", "goal_follow", "goal_sub", "goal_bits", "hide_cmd", "tele_on",
                "show_latest", "latest_items", "tele_url", "irl_auto", "irl_source", "irl_delay", "irl_back", "ignore",
-               "alerts", "rewards")
+               "alerts", "rewards", "overlays")
 WINDOW_KEYS = ("port", "repo", "remote_on")
 glob = {"loaded": None, "synced": False}
 
@@ -2339,6 +2456,20 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;font-size:14px}
 .toast.on{opacity:1}
 .hidden{display:none!important}
+/* Einblendungen: Editor mit Vorschau im 16:9-Rahmen (1920 × 1080, skaliert) */
+.ov-layout{display:grid;gap:24px;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:start}
+.ov-side{position:sticky;top:16px}
+@media (max-width:900px){.ov-layout{grid-template-columns:minmax(0,1fr)}.ov-side{position:static;order:-1}}
+.ov-preview{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:var(--r-md);border:1px solid var(--line);
+  background:radial-gradient(60% 80% at 20% 30%,#2a1d55 0,transparent 70%),radial-gradient(60% 80% at 85% 70%,#14306b 0,transparent 70%),#0b0c1d}
+.ov-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;font-family:var(--sans)}
+.posgrid{display:grid;grid-template-columns:repeat(3,40px);gap:6px}
+.posgrid button{height:40px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--raised);cursor:pointer;padding:0}
+.posgrid button.on{background:var(--violet);border-color:var(--violet)}
+.posgrid button[disabled]{opacity:.35;cursor:not-allowed}
+.ov-item{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+.ov-item:first-child{border-top:0;padding-top:0}
+.thumb{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--r-sm);background:var(--raised);flex:none}
 </style>
 </head>
 <body>
@@ -2349,6 +2480,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
     <button data-tab="alerts">Alerts</button>
+    <button data-tab="overlays">Einblendungen</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -2454,7 +2586,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <div class="grid" style="margin-top:16px">
       <div class="card stack span-all">
         <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
-        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten.</p>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: eigene Einblendung zeigen, Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten. Einblendungen gestaltest du unter „Einblendungen“.</p>
         <div id="rules" class="stack"></div>
         <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
       </div>
@@ -2465,6 +2597,64 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       </div>
     </div>
     <datalist id="reward-titles"></datalist>
+  </section>
+
+  <section id="tab-overlays" class="hidden">
+    <div class="page-head"><h1>Einblendungen</h1><p>Eigene Einblendungen für Kanalpunkte und Alerts: Vorlage wählen, dann Texte, Bild oder Video, Position, Größe, Farbe, Animation und Sound einstellen. Die Packs zeigen sie in ihrer Schrift. Verknüpfen unter „Alerts“.</p></div>
+    <div class="stack">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Deine Einblendungen</h2><button class="btn btn-sm btn-primary" id="ov-new">Neue Einblendung</button></div>
+        <div id="ov-list"></div>
+      </div>
+      <div class="card hidden" id="ov-editor">
+        <div class="ov-layout">
+          <div class="stack" id="ov-form">
+            <h2 id="ov-head">Einblendung bearbeiten</h2>
+            <div class="field"><label>Name</label><input type="text" data-ov="name" maxlength="60"></div>
+            <div class="field"><label>Vorlage</label><select data-ov="template" style="width:100%">
+              <option value="card">Karte – Bild und Text</option><option value="banner">Banner – Leiste über die Breite</option>
+              <option value="media">Nur Bild oder Video</option><option value="text">Nur Text</option>
+              <option value="pack">Alert im Stil des Packs</option></select><span class="hint" id="ov-tpl-hint"></span></div>
+            <div class="field" data-for="title"><label>Titel</label><input type="text" data-ov="title" maxlength="160"></div>
+            <div class="field" data-for="line"><label>Zeile darunter</label><input type="text" data-ov="line" maxlength="240">
+              <span class="hint">Platzhalter: {name} {belohnung} {eingabe} {kosten}, bei Alerts auch {anzahl} {monate} {stufe}</span></div>
+            <div class="field" data-for="media"><label>Bild oder Video</label>
+              <div class="row"><select data-ov="media" style="flex:1"></select><label class="btn btn-sm">Hochladen<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.webm,.mp4,image/*,video/webm,video/mp4" id="ov-upload" hidden></label></div>
+              <span class="hint">PNG, JPG, GIF, WEBP, WEBM oder MP4 bis 15 MB. Videos laufen in Schleife, mit Ton, wenn kein Sound gewählt ist.</span></div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))" data-for="pos">
+              <div class="field"><label>Position</label><div class="posgrid" id="ov-pos"></div></div>
+              <div class="stack" style="gap:12px">
+                <div class="field"><label>Abstand zum Rand (px)</label><input type="number" min="0" max="600" data-ov="margin"></div>
+                <div class="field"><label>Größe</label><select data-ov="size" style="width:100%"><option value="s">Klein</option><option value="m">Mittel</option><option value="l">Groß</option><option value="custom">Eigene</option></select></div>
+                <div class="field hidden" id="ov-width-f"><label id="ov-width-l">Breite (px)</label><input type="number" min="16" max="1920" data-ov="width"></div>
+              </div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field" data-for="color"><label>Farbe</label><div class="row"><label class="check"><input type="checkbox" id="ov-packcolor">vom Pack</label><input type="color" id="ov-color" value="#b303f8" style="width:52px;height:40px;border:0;background:none;padding:0"></div></div>
+              <div class="field" data-for="bg"><label>Hintergrund</label><select data-ov="bg" style="width:100%"><option value="glass">Durchscheinend</option><option value="solid">Deckend</option><option value="none">Ohne</option></select></div>
+              <div class="field" data-for="anim"><label>Animation</label><select data-ov="anim" style="width:100%"><option value="slide">Hereinschieben</option><option value="fade">Einblenden</option><option value="pop">Aufploppen</option></select></div>
+              <div class="field"><label>Dauer (s)</label><input type="number" min="1" max="120" data-ov="secs"></div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field"><label>Sound</label><select data-ov="sound" style="width:100%"></select><span class="hint">Sounds lädst du unter „Alerts“ hoch.</span></div>
+              <div class="field"><label>Lautstärke <span class="muted" id="ov-vol-v"></span></label><input type="range" min="0" max="100" data-ov="volume"></div>
+            </div>
+            <div class="row"><button class="btn btn-primary" id="ov-save">Speichern</button><button class="btn" id="ov-test">In OBS testen</button>
+              <button class="btn" id="ov-close">Schließen</button><button class="btn btn-danger" id="ov-del">Löschen</button></div>
+          </div>
+          <div class="ov-side">
+            <div class="label" style="margin-bottom:8px">Vorschau</div>
+            <div class="ov-preview" id="ov-preview"><div class="ov-stage" id="ov-stage"></div></div>
+            <div class="row" style="margin-top:10px"><button class="btn btn-sm" id="ov-play">Animation abspielen</button>
+              <span class="small muted" id="ov-note">Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card stack">
+        <div><h2>Bilder und Videos</h2><p class="lead" style="margin:0">Hochgeladene Dateien für Einblendungen.</p></div>
+        <div id="ov-media"></div>
+      </div>
+    </div>
   </section>
 
   <section id="tab-packs" class="hidden">
@@ -2755,7 +2945,7 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
-  renderObs();renderAlerts();
+  renderObs();renderAlerts();renderOverlays();
 }
 
 /* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
@@ -2796,6 +2986,7 @@ function buildAlerts(){
     c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
       <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
       ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Darstellung</label><select data-a="overlay" style="width:100%"></select></div>
       <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
       <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
       <div class="row"><span class="small muted" data-snd></span></div>
@@ -2814,6 +3005,9 @@ function renderAlerts(){
   if(!alertsBuilt)buildAlerts();
   ATYPES.forEach(([t])=>{
     const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    const os=c.querySelector('[data-a=overlay]'),oo=ovOptions('Standard-Alert des Packs');
+    if(os.dataset.o!==oo){os.dataset.o=oo;os.innerHTML=oo}
+    c.querySelectorAll('[data-a=kind],[data-a=detail]').forEach(i=>i.closest('.field').classList.toggle('hidden',!!a.overlay&&(S.overlays||[]).some(o=>o.id===a.overlay)));
     c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
     c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
     const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
@@ -2847,13 +3041,14 @@ function ruleRow(r,i){
   return `<div class="alert stack" style="gap:10px" data-rule="${i}">
     <div class="form-grid">
       <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Einblendung</label><select data-r="overlay">${ovOptions('keine',r.overlay)}</select></div>
       <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
       <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
       <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
       <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
       <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
     </div>
-    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Alert zeigen</label>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Standard-Alert des Packs zeigen</label>
       <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
 }
 function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
@@ -2861,7 +3056,212 @@ function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.qu
 $('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
 $('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
 $('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
-$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();render();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+
+/* ---------- Einblendungen: Liste, Editor (Entwurf bis „Speichern“), Vorschau ---------- */
+const OV_TPL={card:'Karte',banner:'Banner',media:'Bild/Video',text:'Text',pack:'Alert des Packs'};
+const OV_HINT={card:'Bild oben, darunter Titel und Zeile.',banner:'Leiste über die ganze Breite – oben, mittig oder unten.',
+  media:'Nur das Bild oder Video, ohne Text.',text:'Großer Text in der Farbe, auf Wunsch ohne Hintergrund.',
+  pack:'Der Alert des Packs mit deinen Texten, deinem Sound und deiner Dauer. Position und Aussehen bestimmt das Pack.'};
+const OV_SAMPLE={name:'Sternenstaub',belohnung:'Trink was!',eingabe:'Ein Hoch auf den Chat!',kosten:'500',anzahl:'5',monate:'14',stufe:'1'};
+const ovFill=t=>String(t||'').replace(/\{(\w+)\}/g,(m,k)=>k in OV_SAMPLE?OV_SAMPLE[k]:m);
+let ovDraft=null,ovDirty=false;
+function ovOptions(none,val){return `<option value="">${esc(none)}</option>`+(S.overlays||[]).map(o=>`<option value="${esc(o.id)}" ${o.id===val?'selected':''}>${esc(o.name)}</option>`).join('')}
+['tl','tc','tr','ml','mc','mr','bl','bc','br'].forEach(p=>{const b=el('button');b.type='button';b.dataset.pos=p;b.title={t:'oben',m:'Mitte',b:'unten'}[p[0]]+' '+{l:'links',c:'mittig',r:'rechts'}[p[1]];$('#ov-pos').append(b)});
+function ovUsed(id){const r=(S.rewards||[]).filter(x=>x.overlay===id).map(x=>'„'+x.reward+'“'),a=ATYPES.filter(([t])=>((S.alerts||{})[t]||{}).overlay===id).map(([,l])=>l);
+  return [...a,...r].join(', ')}
+function renderOverlays(){
+  const list=(S.overlays||[]).map(o=>`<div class="ov-item"><div style="min-width:0"><strong>${esc(o.name)}</strong> <span class="chip chip-sm">${OV_TPL[o.template]||o.template}</span>
+    <div class="small muted">${ovUsed(o.id)?'Für: '+esc(ovUsed(o.id)):'Noch nicht verknüpft – unter „Alerts“ einer Art oder Kanalpunkt-Regel zuordnen.'}</div></div>
+    <div class="row"><button class="btn btn-sm" data-ov-edit="${esc(o.id)}">Bearbeiten</button><button class="btn btn-sm" data-act="overlay_test" data-id="${esc(o.id)}">In OBS testen</button></div></div>`).join('')
+    ||'<span class="muted small">Noch keine Einblendung. „Neue Einblendung“ legt eine an.</span>';
+  if($('#ov-list').innerHTML!==list)$('#ov-list').innerHTML=list;
+  const md=(S.media||[]).map(m=>`<div class="ov-item"><div class="row" style="min-width:0">${m.video?`<video class="thumb" src="/media/${encodeURIComponent(m.file)}" muted></video>`:`<img class="thumb" src="/media/${encodeURIComponent(m.file)}" alt="">`}<span>${esc(m.file)}</span></div>
+    <button class="btn btn-sm btn-danger" data-act="media_delete" data-id="${esc(m.file)}" data-confirm="${esc(m.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#ov-media').innerHTML!==md)$('#ov-media').innerHTML=md;
+  if(ovDraft)ovOptionsForm();
+}
+function ovOptionsForm(){
+  const ms=$('#ov-form [data-ov=media]'),ss=$('#ov-form [data-ov=sound]');
+  const mo='<option value="">kein Bild</option>'+(S.media||[]).map(m=>`<option value="${esc(m.file)}">${esc(m.file)}</option>`).join('');
+  const so='<option value="">kein Sound</option>'+(S.sounds||[]).map(x=>`<option value="${esc(x.file)}">${esc(x.file)}</option>`).join('');
+  if(ms.dataset.o!==mo){ms.dataset.o=mo;ms.innerHTML=mo;ms.value=ovDraft.media||''}
+  if(ss.dataset.o!==so){ss.dataset.o=so;ss.innerHTML=so;ss.value=ovDraft.sound||''}
+}
+function ovOpen(o){
+  ovDraft=JSON.parse(JSON.stringify(o));ovDirty=false;
+  $('#ov-editor').classList.remove('hidden');$('#ov-head').textContent=o.id?'Einblendung bearbeiten':'Neue Einblendung';
+  $('#ov-del').classList.toggle('hidden',!o.id);
+  ovOptionsForm();
+  $$('#ov-form [data-ov]').forEach(i=>i.value=ovDraft[i.dataset.ov]??'');
+  $('#ov-packcolor').checked=!ovDraft.color;$('#ov-color').value=ovDraft.color||'#b303f8';
+  ovSync();$('#ov-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function ovRead(){
+  $$('#ov-form [data-ov]').forEach(i=>ovDraft[i.dataset.ov]=i.type==='number'||i.type==='range'?parseInt(i.value||'0',10):i.value);
+  ovDraft.color=$('#ov-packcolor').checked?'':$('#ov-color').value;
+}
+function ovSync(){
+  const d=ovDraft,pack=d.template==='pack';
+  $('#ov-tpl-hint').textContent=OV_HINT[d.template]||'';
+  $$('#ov-form [data-for]').forEach(f=>{const k=f.dataset.for;
+    f.classList.toggle('hidden',pack&&k!=='title'&&k!=='line'||(d.template==='media'&&(k==='title'||k==='line'))||(d.template==='text'&&k==='media'))});
+  $('#ov-width-f').classList.toggle('hidden',d.size!=='custom');
+  $('#ov-width-l').textContent=d.template==='banner'?'Höhe (px)':d.template==='text'?'Schriftgröße (px)':'Breite (px)';
+  $('#ov-color').disabled=$('#ov-packcolor').checked;
+  $('#ov-vol-v').textContent=(d.volume??100)+' %';
+  $$('#ov-pos button').forEach(b=>{b.classList.toggle('on',b.dataset.pos===d.pos);b.disabled=d.template==='banner'&&b.dataset.pos[1]!=='c'});
+  $('#ov-note').textContent=pack?'Angedeutet – in OBS erscheint der Alert des Packs.':'Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.';
+  ovPreview(false);
+}
+function ovView(){
+  const d=ovDraft,m=(S.media||[]).find(x=>x.file===d.media);
+  const o=Object.assign({},d,{title:ovFill(d.title),line:ovFill(d.line),media:m?'/media/'+encodeURIComponent(m.file):'',video:!!(m&&m.video),
+    sound:d.sound?'/sounds/'+encodeURIComponent(d.sound):''});
+  if(d.template==='pack')Object.assign(o,{template:'card',media:'',bg:'solid',pos:'mc',size:'m',anim:'pop',color:''});
+  return o;
+}
+function ovScale(){const p=$('#ov-preview');$('#ov-stage').style.transform=`scale(${p.clientWidth/1920})`}
+new ResizeObserver(ovScale).observe($('#ov-preview'));
+function ovPreview(play){
+  const st=$('#ov-stage');st.innerHTML='';if(!ovDraft)return;ovScale();
+  const o=ovView();
+  if(play){ovlPlay(o,st,{volume:((S.live&&S.live.volume)??70)/100});return}
+  const n=ovlNode(Object.assign({},o,{mute:true}));n.box.style.transition='none';n.box.classList.add('o-in');st.append(n.wrap);
+}
+$('#ov-form').addEventListener('input',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-form').addEventListener('change',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-pos').addEventListener('click',ev=>{const b=ev.target.closest('[data-pos]');if(!b||!ovDraft)return;ovDraft.pos=b.dataset.pos;ovDirty=true;ovSync()});
+$('#ov-new').onclick=()=>ovOpen({id:'',name:'Neue Einblendung',template:'card',pos:'tc',margin:48,size:'m',width:480,title:'{name}',line:'{belohnung}',
+  media:'',color:'',bg:'glass',anim:'slide',secs:6,sound:'',volume:100});
+$('#ov-list').addEventListener('click',ev=>{const b=ev.target.closest('[data-ov-edit]');if(!b)return;
+  if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;
+  const o=(S.overlays||[]).find(x=>x.id===b.dataset.ovEdit);if(o)ovOpen(o)});
+$('#ov-play').onclick=()=>ovPreview(true);
+$('#ov-close').onclick=()=>{if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden')};
+async function ovSave(){
+  ovRead();if(!ovDraft.id)ovDraft.id='o'+Math.random().toString(16).slice(2,8);
+  const list=(S.overlays||[]).filter(o=>o.id!==ovDraft.id);const i=(S.overlays||[]).findIndex(o=>o.id===ovDraft.id);
+  list.splice(i<0?list.length:i,0,ovDraft);
+  const r=await api('/api/settings',{overlays:list});S=r.state;ovDirty=false;$('#ov-head').textContent='Einblendung bearbeiten';$('#ov-del').classList.remove('hidden');render();
+}
+$('#ov-save').onclick=()=>ovSave().then(()=>toast('Einblendung gespeichert')).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#ov-test').onclick=async()=>{try{if(ovDirty||!ovDraft.id)await ovSave();const r=await api('/api/control',{action:'overlay_test',id:ovDraft.id});S=r.state;toast('An die Szenen geschickt')}catch(e){toast(e.message)}};
+$('#ov-del').onclick=async()=>{if(!ovDraft||!confirm(`„${ovDraft.name}“ löschen? Verknüpfte Alerts zeigen dann wieder den Standard-Alert.`))return;
+  try{const r=await api('/api/settings',{overlays:(S.overlays||[]).filter(o=>o.id!==ovDraft.id)});S=r.state;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden');render();toast('Gelöscht')}
+  catch(e){toast(e.message)}};
+$('#ov-upload').onchange=()=>{const i=$('#ov-upload'),file=i.files[0];if(!file)return;i.value='';
+  if(file.size>15*1024*1024){toast('Größer als 15 MB');return}
+  toast('Wird hochgeladen …');
+  const rd=new FileReader();rd.onload=()=>api('/api/media',{filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;if(ovDraft){ovOptionsForm();ovDraft.media=r.file;$('#ov-form [data-ov=media]').value=r.file;ovDirty=true;ovSync()}render();toast(r.message)})
+    .catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file)};
+
+/* =========================================================
+   Einblendungen aus VOID Studio (build/core/overlay.js) – gemeinsam für alle Packs und die Vorschau der Oberfläche.
+   packs.py setzt diese Datei in jedes Pack ein, embed_web.py in die Oberfläche (Markierung @OVERLAY@).
+
+   Nachricht {type:'overlay', o:{template, pos, margin, size, width, title, line, media, video, color, bg, anim, secs, sound, volume}}
+   Vorlagen: card (Karte mit Bild), banner (Leiste), media (nur Bild/Video), text (nur Text).
+   „pack“ zeigt die Szene als Alert im eigenen Stil (ovlHost). Farbe und Titelschrift kommen aus dem Pack
+   (--ovl-acc, --ovl-font), eine eigene Farbe in o.color geht vor.
+   ========================================================= */
+const OVL_SIZE={card:{s:360,m:480,l:640},banner:{s:64,m:88,l:120},media:{s:320,m:480,l:720},text:{s:44,m:64,l:96}};
+const OVL_CSS=`
+.ovl-pos{position:absolute;z-index:60;pointer-events:none}
+.ovl{--a:var(--ovl-acc,#B303F8);color:#F5F6FA;font-family:var(--ovl-body,inherit);opacity:0;
+  transition:opacity .45s ease,transform .6s cubic-bezier(.2,.9,.25,1)}
+.ovl.o-in{opacity:1;transform:none!important}
+.ovl.o-pop{transform:scale(.55)}.ovl.o-from-l{transform:translateX(-120px)}.ovl.o-from-r{transform:translateX(120px)}
+.ovl.o-from-t{transform:translateY(-120px)}.ovl.o-from-b{transform:translateY(120px)}
+.ovl .o-t{font-family:var(--ovl-font,inherit);font-weight:700;line-height:1.08;overflow-wrap:anywhere}
+.ovl .o-l{opacity:.86;line-height:1.3;overflow-wrap:anywhere}
+.ovl .o-m{display:block;width:100%;height:auto}
+.ovl.o-bg-solid{background:#0C0E1E;border:1px solid rgba(255,255,255,.10)}
+.ovl.o-bg-glass{background:rgba(8,8,24,.70);border:1px solid rgba(255,255,255,.14);backdrop-filter:blur(12px)}
+.ovl.o-bg-none .o-t,.ovl.o-bg-none .o-l{text-shadow:0 2px 14px rgba(0,0,0,.75),0 0 2px rgba(0,0,0,.9)}
+.ovl.o-card{width:calc(var(--w)*1px);border-radius:14px;overflow:hidden;box-shadow:0 18px 50px rgba(0,0,0,.45)}
+.ovl.o-card.bg-none{box-shadow:none}
+.ovl.o-card .o-m{max-height:calc(var(--w)*.75px);object-fit:cover}
+.ovl.o-card .o-b{padding:calc(var(--w)*.045px) calc(var(--w)*.055px);border-top:4px solid var(--a)}
+.ovl.o-card .o-t{font-size:calc(var(--w)*.066px)}.ovl.o-card .o-l{font-size:calc(var(--w)*.042px);margin-top:calc(var(--w)*.014px)}
+.ovl.o-banner{display:flex;align-items:center;gap:calc(var(--h)*.3px);height:calc(var(--h)*1px);border-radius:10px;overflow:hidden;
+  padding-right:calc(var(--h)*.4px);border-left:calc(var(--h)*.09px) solid var(--a)}
+.ovl.o-banner .o-m{width:auto;height:100%;flex:none}
+.ovl.o-banner .o-x{display:flex;align-items:baseline;gap:calc(var(--h)*.3px);min-width:0;padding-left:calc(var(--h)*.25px)}
+.ovl.o-banner .o-t{font-size:calc(var(--h)*.4px);white-space:nowrap}
+.ovl.o-banner .o-l{font-size:calc(var(--h)*.28px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ovl.o-media{width:calc(var(--w)*1px);border-radius:12px;overflow:hidden}
+.ovl.o-media.bg-none{border-radius:0}
+.ovl.o-text{text-align:center;padding:calc(var(--w)*.25px) calc(var(--w)*.45px);border-radius:14px}
+.ovl.o-text .o-t{font-size:calc(var(--w)*1px)}.ovl.o-text .o-l{font-size:calc(var(--w)*.5px);margin-top:calc(var(--w)*.12px)}
+.ovl.o-text .o-t{color:var(--a)}
+`;
+function ovlCss(doc=document){
+  if(doc.getElementById('ovl-css'))return;
+  const s=doc.createElement('style');s.id='ovl-css';s.textContent=OVL_CSS;doc.head.prepend(s);   /* vorne: Packs dürfen überschreiben */
+}
+/* Aufbau ohne Animation; Wrapper sitzt an der Position, das innere Element wird animiert */
+function ovlNode(o){
+  ovlCss();
+  const tpl=OVL_SIZE[o.template]?o.template:'card',sz=OVL_SIZE[tpl],m=Math.max(0,+o.margin||0);
+  const size=o.size==='custom'?Math.max(16,Math.min(1920,+o.width||sz.m)):(sz[o.size]||sz.m);
+  const pos=/^[tmb][lcr]$/.test(o.pos||'')?o.pos:'tc',row=pos[0],col=pos[1];
+  const wrap=document.createElement('div');wrap.className='ovl-pos';
+  const st=wrap.style,tf=[];
+  if(tpl==='banner'){st.left=m+'px';st.right=m+'px'}
+  else if(col==='l')st.left=m+'px';else if(col==='r')st.right=m+'px';else{st.left='50%';tf.push('translateX(-50%)')}
+  if(row==='t')st.top=m+'px';else if(row==='b')st.bottom=m+'px';else{st.top='50%';tf.push('translateY(-50%)')}
+  if(tf.length)st.transform=tf.join(' ');
+  const box=document.createElement('div');
+  const from=tpl==='banner'?(row==='b'?'b':'t'):col==='l'?'l':col==='r'?'r':row==='b'?'b':'t';
+  box.className=`ovl o-${tpl} o-bg-${['solid','glass','none'].includes(o.bg)?o.bg:'glass'} ${o.anim==='pop'?'o-pop':o.anim==='fade'?'':'o-from-'+from}`;
+  box.style.setProperty(tpl==='banner'?'--h':'--w',size);
+  if(/^#[0-9a-fA-F]{6}$/.test(o.color||''))box.style.setProperty('--a',o.color);
+  let media=null;
+  if(o.media&&tpl!=='text'){
+    media=document.createElement(o.video?'video':'img');media.className='o-m';media.src=o.media;
+    if(o.video){media.autoplay=true;media.loop=true;media.playsInline=true;media.muted=!!o.sound||!!o.mute}
+    else media.alt='';
+  }
+  const t=document.createElement('div');t.className='o-t';t.textContent=o.title||'';
+  const l=document.createElement('div');l.className='o-l';l.textContent=o.line||'';
+  if(tpl==='media'){if(media)box.append(media)}
+  else if(tpl==='banner'){if(media)box.append(media);const x=document.createElement('div');x.className='o-x';x.append(t);if(o.line)x.append(l);box.append(x)}
+  else if(tpl==='text'){box.append(t);if(o.line)box.append(l)}
+  else{if(media)box.append(media);const b=document.createElement('div');b.className='o-b';b.append(t);if(o.line)b.append(l);box.append(b)}
+  wrap.append(box);
+  return {wrap,box,media};
+}
+/* Ein-, Stehen-, Ausblenden. hold(ms) kann der Host ersetzen (Überspringen); volume = Gesamtlautstärke 0…1 */
+async function ovlPlay(o,root,{hold=null,volume=1}={}){
+  const n=ovlNode(o),pause=ms=>new Promise(r=>setTimeout(r,ms));
+  root.append(n.wrap);
+  if(n.media&&n.media.play){n.media.volume=Math.max(0,Math.min(1,volume*(o.volume??100)/100));n.media.play().catch(()=>{})}
+  await pause(40);n.box.classList.add('o-in');
+  if(o.sound){const v=volume*(o.volume??100)/100;if(v>0){const a=new Audio(o.sound);a.volume=Math.min(1,v);a.play().catch(()=>{})}}
+  const ms=Math.max(1,Math.min(120,+o.secs||6))*1000;
+  await (hold?hold(ms):pause(ms));
+  n.box.classList.remove('o-in');await pause(650);n.wrap.remove();
+}
+/* In den Szenen: eigene Warteschlange neben den Alerts, hält bei „Pausieren“ an */
+const OQ=[];let ovlBusy=false;
+function ovlHost(o){
+  if(typeof ALERTS!=='undefined'&&!ALERTS)return;
+  if(o.template==='pack'){
+    pushAlert({type:o.event||'redeem',user:o.user||'',title:o.title,texts:[o.title||'',o.line||''],hold:Math.max(1,+o.secs||6)*1000,sound:o.sound||''});
+    return;
+  }
+  OQ.push(o);if(!ovlBusy)ovlNext();
+}
+async function ovlNext(){
+  if(!OQ.length){ovlBusy=false;return}ovlBusy=true;
+  while(STATE.paused)await new Promise(r=>setTimeout(r,300));
+  try{await ovlPlay(OQ.shift(),stage,{volume:(STATE.volume??70)/100})}catch(_){}
+  ovlNext();
+}
+
 
 async function poll(){
   if(!KEY){showNoKey();return}

@@ -41,6 +41,7 @@
 @font-face{font-family:"Space Grotesk";font-weight:500;src:url(data:font/woff2;base64,__SG5__) format("woff2");font-display:block}
 
 :root{
+  --ovl-font:"VOID Latin"; --ovl-acc:var(--sky);   /* Einblendungen aus VOID Studio */
   --night:#06081A;      /* Grund – nah am Void-Schwarz */
   --deep:#0C1030;
   --aether:#BFE6FF;     /* Runenlicht */
@@ -645,9 +646,9 @@ async function showAlert(e){
     const mk=makeMark({d:200,t:520});mk.style.cssText='width:58px;margin:0 auto 12px';b.prepend(mk)}
   a.appendChild(b);alertBox.appendChild(a);
   const C=new Cipher(n,{stagger:55,shuffle:520});C.build((e.user||'Anonym').slice(0,25));
-  await wait(40);a.classList.add('in');playSound(e.type);await wait(450);
+  await wait(40);a.classList.add('in');e.sound?playUrl(e.sound):playSound(e.type);await wait(450);
   await C.reveal();a.classList.add('done');
-  await hold(e.text?8000:5500);skipNow=null;
+  await hold(e.hold||(e.text?8000:5500));skipNow=null;
   await C.conceal();a.classList.remove('in');await wait(750);a.remove();
 }
 
@@ -765,6 +766,8 @@ function applyInfo(d){
   go();
 }
 
+/*@OVERLAY@*/
+
 /* ---------- Verbindung zur Bridge ---------- */
 function onMessage(e){
   switch(e.type){
@@ -777,6 +780,7 @@ function onMessage(e){
     case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
     case 'infos':if(PACK_ID&&e.packs)applyInfo(withTimers(e.packs[PACK_ID]||{},e.timers));break;
     case 'sound':playUrl(e.url);break;
+    case 'overlay':if(e.o)ovlHost(e.o);break;
     default:pushAlert(e);
   }
 }

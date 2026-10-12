@@ -108,6 +108,20 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   opacity:0;transition:opacity .3s;pointer-events:none;max-width:90vw;font-size:14px}
 .toast.on{opacity:1}
 .hidden{display:none!important}
+/* Einblendungen: Editor mit Vorschau im 16:9-Rahmen (1920 × 1080, skaliert) */
+.ov-layout{display:grid;gap:24px;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);align-items:start}
+.ov-side{position:sticky;top:16px}
+@media (max-width:900px){.ov-layout{grid-template-columns:minmax(0,1fr)}.ov-side{position:static;order:-1}}
+.ov-preview{position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:var(--r-md);border:1px solid var(--line);
+  background:radial-gradient(60% 80% at 20% 30%,#2a1d55 0,transparent 70%),radial-gradient(60% 80% at 85% 70%,#14306b 0,transparent 70%),#0b0c1d}
+.ov-stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;font-family:var(--sans)}
+.posgrid{display:grid;grid-template-columns:repeat(3,40px);gap:6px}
+.posgrid button{height:40px;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--raised);cursor:pointer;padding:0}
+.posgrid button.on{background:var(--violet);border-color:var(--violet)}
+.posgrid button[disabled]{opacity:.35;cursor:not-allowed}
+.ov-item{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-top:1px solid var(--line)}
+.ov-item:first-child{border-top:0;padding-top:0}
+.thumb{width:72px;aspect-ratio:16/9;object-fit:cover;border-radius:var(--r-sm);background:var(--raised);flex:none}
 </style>
 </head>
 <body>
@@ -118,6 +132,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
     <button data-tab="alerts">Alerts</button>
+    <button data-tab="overlays">Einblendungen</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -223,7 +238,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <div class="grid" style="margin-top:16px">
       <div class="card stack span-all">
         <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
-        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten.</p>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: eigene Einblendung zeigen, Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten. Einblendungen gestaltest du unter „Einblendungen“.</p>
         <div id="rules" class="stack"></div>
         <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
       </div>
@@ -234,6 +249,64 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       </div>
     </div>
     <datalist id="reward-titles"></datalist>
+  </section>
+
+  <section id="tab-overlays" class="hidden">
+    <div class="page-head"><h1>Einblendungen</h1><p>Eigene Einblendungen für Kanalpunkte und Alerts: Vorlage wählen, dann Texte, Bild oder Video, Position, Größe, Farbe, Animation und Sound einstellen. Die Packs zeigen sie in ihrer Schrift. Verknüpfen unter „Alerts“.</p></div>
+    <div class="stack">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Deine Einblendungen</h2><button class="btn btn-sm btn-primary" id="ov-new">Neue Einblendung</button></div>
+        <div id="ov-list"></div>
+      </div>
+      <div class="card hidden" id="ov-editor">
+        <div class="ov-layout">
+          <div class="stack" id="ov-form">
+            <h2 id="ov-head">Einblendung bearbeiten</h2>
+            <div class="field"><label>Name</label><input type="text" data-ov="name" maxlength="60"></div>
+            <div class="field"><label>Vorlage</label><select data-ov="template" style="width:100%">
+              <option value="card">Karte – Bild und Text</option><option value="banner">Banner – Leiste über die Breite</option>
+              <option value="media">Nur Bild oder Video</option><option value="text">Nur Text</option>
+              <option value="pack">Alert im Stil des Packs</option></select><span class="hint" id="ov-tpl-hint"></span></div>
+            <div class="field" data-for="title"><label>Titel</label><input type="text" data-ov="title" maxlength="160"></div>
+            <div class="field" data-for="line"><label>Zeile darunter</label><input type="text" data-ov="line" maxlength="240">
+              <span class="hint">Platzhalter: {name} {belohnung} {eingabe} {kosten}, bei Alerts auch {anzahl} {monate} {stufe}</span></div>
+            <div class="field" data-for="media"><label>Bild oder Video</label>
+              <div class="row"><select data-ov="media" style="flex:1"></select><label class="btn btn-sm">Hochladen<input type="file" accept=".png,.jpg,.jpeg,.gif,.webp,.webm,.mp4,image/*,video/webm,video/mp4" id="ov-upload" hidden></label></div>
+              <span class="hint">PNG, JPG, GIF, WEBP, WEBM oder MP4 bis 15 MB. Videos laufen in Schleife, mit Ton, wenn kein Sound gewählt ist.</span></div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))" data-for="pos">
+              <div class="field"><label>Position</label><div class="posgrid" id="ov-pos"></div></div>
+              <div class="stack" style="gap:12px">
+                <div class="field"><label>Abstand zum Rand (px)</label><input type="number" min="0" max="600" data-ov="margin"></div>
+                <div class="field"><label>Größe</label><select data-ov="size" style="width:100%"><option value="s">Klein</option><option value="m">Mittel</option><option value="l">Groß</option><option value="custom">Eigene</option></select></div>
+                <div class="field hidden" id="ov-width-f"><label id="ov-width-l">Breite (px)</label><input type="number" min="16" max="1920" data-ov="width"></div>
+              </div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field" data-for="color"><label>Farbe</label><div class="row"><label class="check"><input type="checkbox" id="ov-packcolor">vom Pack</label><input type="color" id="ov-color" value="#b303f8" style="width:52px;height:40px;border:0;background:none;padding:0"></div></div>
+              <div class="field" data-for="bg"><label>Hintergrund</label><select data-ov="bg" style="width:100%"><option value="glass">Durchscheinend</option><option value="solid">Deckend</option><option value="none">Ohne</option></select></div>
+              <div class="field" data-for="anim"><label>Animation</label><select data-ov="anim" style="width:100%"><option value="slide">Hereinschieben</option><option value="fade">Einblenden</option><option value="pop">Aufploppen</option></select></div>
+              <div class="field"><label>Dauer (s)</label><input type="number" min="1" max="120" data-ov="secs"></div>
+            </div>
+            <div class="form-grid" style="grid-template-columns:repeat(auto-fill,minmax(150px,1fr))">
+              <div class="field"><label>Sound</label><select data-ov="sound" style="width:100%"></select><span class="hint">Sounds lädst du unter „Alerts“ hoch.</span></div>
+              <div class="field"><label>Lautstärke <span class="muted" id="ov-vol-v"></span></label><input type="range" min="0" max="100" data-ov="volume"></div>
+            </div>
+            <div class="row"><button class="btn btn-primary" id="ov-save">Speichern</button><button class="btn" id="ov-test">In OBS testen</button>
+              <button class="btn" id="ov-close">Schließen</button><button class="btn btn-danger" id="ov-del">Löschen</button></div>
+          </div>
+          <div class="ov-side">
+            <div class="label" style="margin-bottom:8px">Vorschau</div>
+            <div class="ov-preview" id="ov-preview"><div class="ov-stage" id="ov-stage"></div></div>
+            <div class="row" style="margin-top:10px"><button class="btn btn-sm" id="ov-play">Animation abspielen</button>
+              <span class="small muted" id="ov-note">Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="card stack">
+        <div><h2>Bilder und Videos</h2><p class="lead" style="margin:0">Hochgeladene Dateien für Einblendungen.</p></div>
+        <div id="ov-media"></div>
+      </div>
+    </div>
   </section>
 
   <section id="tab-packs" class="hidden">
@@ -524,7 +597,7 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
-  renderObs();renderAlerts();
+  renderObs();renderAlerts();renderOverlays();
 }
 
 /* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
@@ -565,6 +638,7 @@ function buildAlerts(){
     c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
       <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
       ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Darstellung</label><select data-a="overlay" style="width:100%"></select></div>
       <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
       <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
       <div class="row"><span class="small muted" data-snd></span></div>
@@ -583,6 +657,9 @@ function renderAlerts(){
   if(!alertsBuilt)buildAlerts();
   ATYPES.forEach(([t])=>{
     const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    const os=c.querySelector('[data-a=overlay]'),oo=ovOptions('Standard-Alert des Packs');
+    if(os.dataset.o!==oo){os.dataset.o=oo;os.innerHTML=oo}
+    c.querySelectorAll('[data-a=kind],[data-a=detail]').forEach(i=>i.closest('.field').classList.toggle('hidden',!!a.overlay&&(S.overlays||[]).some(o=>o.id===a.overlay)));
     c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
     c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
     const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
@@ -616,13 +693,14 @@ function ruleRow(r,i){
   return `<div class="alert stack" style="gap:10px" data-rule="${i}">
     <div class="form-grid">
       <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Einblendung</label><select data-r="overlay">${ovOptions('keine',r.overlay)}</select></div>
       <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
       <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
       <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
       <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
       <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
     </div>
-    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Alert zeigen</label>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Standard-Alert des Packs zeigen</label>
       <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
 }
 function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
@@ -630,7 +708,109 @@ function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.qu
 $('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
 $('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
 $('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
-$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();render();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
+
+/* ---------- Einblendungen: Liste, Editor (Entwurf bis „Speichern“), Vorschau ---------- */
+const OV_TPL={card:'Karte',banner:'Banner',media:'Bild/Video',text:'Text',pack:'Alert des Packs'};
+const OV_HINT={card:'Bild oben, darunter Titel und Zeile.',banner:'Leiste über die ganze Breite – oben, mittig oder unten.',
+  media:'Nur das Bild oder Video, ohne Text.',text:'Großer Text in der Farbe, auf Wunsch ohne Hintergrund.',
+  pack:'Der Alert des Packs mit deinen Texten, deinem Sound und deiner Dauer. Position und Aussehen bestimmt das Pack.'};
+const OV_SAMPLE={name:'Sternenstaub',belohnung:'Trink was!',eingabe:'Ein Hoch auf den Chat!',kosten:'500',anzahl:'5',monate:'14',stufe:'1'};
+const ovFill=t=>String(t||'').replace(/\{(\w+)\}/g,(m,k)=>k in OV_SAMPLE?OV_SAMPLE[k]:m);
+let ovDraft=null,ovDirty=false;
+function ovOptions(none,val){return `<option value="">${esc(none)}</option>`+(S.overlays||[]).map(o=>`<option value="${esc(o.id)}" ${o.id===val?'selected':''}>${esc(o.name)}</option>`).join('')}
+['tl','tc','tr','ml','mc','mr','bl','bc','br'].forEach(p=>{const b=el('button');b.type='button';b.dataset.pos=p;b.title={t:'oben',m:'Mitte',b:'unten'}[p[0]]+' '+{l:'links',c:'mittig',r:'rechts'}[p[1]];$('#ov-pos').append(b)});
+function ovUsed(id){const r=(S.rewards||[]).filter(x=>x.overlay===id).map(x=>'„'+x.reward+'“'),a=ATYPES.filter(([t])=>((S.alerts||{})[t]||{}).overlay===id).map(([,l])=>l);
+  return [...a,...r].join(', ')}
+function renderOverlays(){
+  const list=(S.overlays||[]).map(o=>`<div class="ov-item"><div style="min-width:0"><strong>${esc(o.name)}</strong> <span class="chip chip-sm">${OV_TPL[o.template]||o.template}</span>
+    <div class="small muted">${ovUsed(o.id)?'Für: '+esc(ovUsed(o.id)):'Noch nicht verknüpft – unter „Alerts“ einer Art oder Kanalpunkt-Regel zuordnen.'}</div></div>
+    <div class="row"><button class="btn btn-sm" data-ov-edit="${esc(o.id)}">Bearbeiten</button><button class="btn btn-sm" data-act="overlay_test" data-id="${esc(o.id)}">In OBS testen</button></div></div>`).join('')
+    ||'<span class="muted small">Noch keine Einblendung. „Neue Einblendung“ legt eine an.</span>';
+  if($('#ov-list').innerHTML!==list)$('#ov-list').innerHTML=list;
+  const md=(S.media||[]).map(m=>`<div class="ov-item"><div class="row" style="min-width:0">${m.video?`<video class="thumb" src="/media/${encodeURIComponent(m.file)}" muted></video>`:`<img class="thumb" src="/media/${encodeURIComponent(m.file)}" alt="">`}<span>${esc(m.file)}</span></div>
+    <button class="btn btn-sm btn-danger" data-act="media_delete" data-id="${esc(m.file)}" data-confirm="${esc(m.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#ov-media').innerHTML!==md)$('#ov-media').innerHTML=md;
+  if(ovDraft)ovOptionsForm();
+}
+function ovOptionsForm(){
+  const ms=$('#ov-form [data-ov=media]'),ss=$('#ov-form [data-ov=sound]');
+  const mo='<option value="">kein Bild</option>'+(S.media||[]).map(m=>`<option value="${esc(m.file)}">${esc(m.file)}</option>`).join('');
+  const so='<option value="">kein Sound</option>'+(S.sounds||[]).map(x=>`<option value="${esc(x.file)}">${esc(x.file)}</option>`).join('');
+  if(ms.dataset.o!==mo){ms.dataset.o=mo;ms.innerHTML=mo;ms.value=ovDraft.media||''}
+  if(ss.dataset.o!==so){ss.dataset.o=so;ss.innerHTML=so;ss.value=ovDraft.sound||''}
+}
+function ovOpen(o){
+  ovDraft=JSON.parse(JSON.stringify(o));ovDirty=false;
+  $('#ov-editor').classList.remove('hidden');$('#ov-head').textContent=o.id?'Einblendung bearbeiten':'Neue Einblendung';
+  $('#ov-del').classList.toggle('hidden',!o.id);
+  ovOptionsForm();
+  $$('#ov-form [data-ov]').forEach(i=>i.value=ovDraft[i.dataset.ov]??'');
+  $('#ov-packcolor').checked=!ovDraft.color;$('#ov-color').value=ovDraft.color||'#b303f8';
+  ovSync();$('#ov-editor').scrollIntoView({behavior:'smooth',block:'start'});
+}
+function ovRead(){
+  $$('#ov-form [data-ov]').forEach(i=>ovDraft[i.dataset.ov]=i.type==='number'||i.type==='range'?parseInt(i.value||'0',10):i.value);
+  ovDraft.color=$('#ov-packcolor').checked?'':$('#ov-color').value;
+}
+function ovSync(){
+  const d=ovDraft,pack=d.template==='pack';
+  $('#ov-tpl-hint').textContent=OV_HINT[d.template]||'';
+  $$('#ov-form [data-for]').forEach(f=>{const k=f.dataset.for;
+    f.classList.toggle('hidden',pack&&k!=='title'&&k!=='line'||(d.template==='media'&&(k==='title'||k==='line'))||(d.template==='text'&&k==='media'))});
+  $('#ov-width-f').classList.toggle('hidden',d.size!=='custom');
+  $('#ov-width-l').textContent=d.template==='banner'?'Höhe (px)':d.template==='text'?'Schriftgröße (px)':'Breite (px)';
+  $('#ov-color').disabled=$('#ov-packcolor').checked;
+  $('#ov-vol-v').textContent=(d.volume??100)+' %';
+  $$('#ov-pos button').forEach(b=>{b.classList.toggle('on',b.dataset.pos===d.pos);b.disabled=d.template==='banner'&&b.dataset.pos[1]!=='c'});
+  $('#ov-note').textContent=pack?'Angedeutet – in OBS erscheint der Alert des Packs.':'Mit Beispielwerten. In OBS kommen Schrift und Farbe vom Pack.';
+  ovPreview(false);
+}
+function ovView(){
+  const d=ovDraft,m=(S.media||[]).find(x=>x.file===d.media);
+  const o=Object.assign({},d,{title:ovFill(d.title),line:ovFill(d.line),media:m?'/media/'+encodeURIComponent(m.file):'',video:!!(m&&m.video),
+    sound:d.sound?'/sounds/'+encodeURIComponent(d.sound):''});
+  if(d.template==='pack')Object.assign(o,{template:'card',media:'',bg:'solid',pos:'mc',size:'m',anim:'pop',color:''});
+  return o;
+}
+function ovScale(){const p=$('#ov-preview');$('#ov-stage').style.transform=`scale(${p.clientWidth/1920})`}
+new ResizeObserver(ovScale).observe($('#ov-preview'));
+function ovPreview(play){
+  const st=$('#ov-stage');st.innerHTML='';if(!ovDraft)return;ovScale();
+  const o=ovView();
+  if(play){ovlPlay(o,st,{volume:((S.live&&S.live.volume)??70)/100});return}
+  const n=ovlNode(Object.assign({},o,{mute:true}));n.box.style.transition='none';n.box.classList.add('o-in');st.append(n.wrap);
+}
+$('#ov-form').addEventListener('input',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-form').addEventListener('change',ev=>{if(!ovDraft||ev.target.id==='ov-upload')return;ovRead();ovDirty=true;ovSync()});
+$('#ov-pos').addEventListener('click',ev=>{const b=ev.target.closest('[data-pos]');if(!b||!ovDraft)return;ovDraft.pos=b.dataset.pos;ovDirty=true;ovSync()});
+$('#ov-new').onclick=()=>ovOpen({id:'',name:'Neue Einblendung',template:'card',pos:'tc',margin:48,size:'m',width:480,title:'{name}',line:'{belohnung}',
+  media:'',color:'',bg:'glass',anim:'slide',secs:6,sound:'',volume:100});
+$('#ov-list').addEventListener('click',ev=>{const b=ev.target.closest('[data-ov-edit]');if(!b)return;
+  if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;
+  const o=(S.overlays||[]).find(x=>x.id===b.dataset.ovEdit);if(o)ovOpen(o)});
+$('#ov-play').onclick=()=>ovPreview(true);
+$('#ov-close').onclick=()=>{if(ovDirty&&!confirm('Ungespeicherte Änderungen verwerfen?'))return;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden')};
+async function ovSave(){
+  ovRead();if(!ovDraft.id)ovDraft.id='o'+Math.random().toString(16).slice(2,8);
+  const list=(S.overlays||[]).filter(o=>o.id!==ovDraft.id);const i=(S.overlays||[]).findIndex(o=>o.id===ovDraft.id);
+  list.splice(i<0?list.length:i,0,ovDraft);
+  const r=await api('/api/settings',{overlays:list});S=r.state;ovDirty=false;$('#ov-head').textContent='Einblendung bearbeiten';$('#ov-del').classList.remove('hidden');render();
+}
+$('#ov-save').onclick=()=>ovSave().then(()=>toast('Einblendung gespeichert')).catch(e=>toast('Nicht gespeichert: '+e.message));
+$('#ov-test').onclick=async()=>{try{if(ovDirty||!ovDraft.id)await ovSave();const r=await api('/api/control',{action:'overlay_test',id:ovDraft.id});S=r.state;toast('An die Szenen geschickt')}catch(e){toast(e.message)}};
+$('#ov-del').onclick=async()=>{if(!ovDraft||!confirm(`„${ovDraft.name}“ löschen? Verknüpfte Alerts zeigen dann wieder den Standard-Alert.`))return;
+  try{const r=await api('/api/settings',{overlays:(S.overlays||[]).filter(o=>o.id!==ovDraft.id)});S=r.state;ovDraft=null;ovDirty=false;$('#ov-editor').classList.add('hidden');render();toast('Gelöscht')}
+  catch(e){toast(e.message)}};
+$('#ov-upload').onchange=()=>{const i=$('#ov-upload'),file=i.files[0];if(!file)return;i.value='';
+  if(file.size>15*1024*1024){toast('Größer als 15 MB');return}
+  toast('Wird hochgeladen …');
+  const rd=new FileReader();rd.onload=()=>api('/api/media',{filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;if(ovDraft){ovOptionsForm();ovDraft.media=r.file;$('#ov-form [data-ov=media]').value=r.file;ovDirty=true;ovSync()}render();toast(r.message)})
+    .catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file)};
+
+/*@OVERLAY@*/
 
 async function poll(){
   if(!KEY){showNoKey();return}
