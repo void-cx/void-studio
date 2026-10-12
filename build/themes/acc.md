@@ -7,5 +7,5 @@
 - **Zielflagge und Klassement:** „Stream endet“ zeigt die Unterstützer der Session als Zeitenturm, P1 in Violett (Raid vor Geschenk-Abos vor Bits vor Abo vor Follow).
 - **Race Control:** Der Chat in „Just Chatting“ läuft als Meldungsliste mit Zeitstempel ab Szenenstart.
 - **Alerts als Einblendung mit Sektoren:** drei Sektoren füllen sich grün, bei großen Momenten violett.
-- **Infotafeln:** in der Szene „VOID · Infos“: „Info · Strecke“, „Info · Auto“, „Info · Serie“.
+- **Infotafeln:** in VOID Studio unter Infos: Strecke, Auto, Serie.
 - **Competizione und EVO:** Die Onboard-Kamera sitzt rechts mittig. Liegt dort bei dir ein HUD-Element, eine andere Ecke wählen: `#cam=br`, `bl`, `tr`, `tl` oder `lm`, und die Kamera in OBS mitverschieben.

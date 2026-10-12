@@ -11,7 +11,7 @@ Felder:
   cam                         Position der Game-Kamera (416 × 234) im Layout "game"
   scenes                      Einstiegsdateien obs/<scene>.html, in dieser Reihenfolge; geprüft von smoke.py
   game_params                 optional: Parameter, die obs/game.html anhängt
-  infos                       optional: weitere Felder für die Szene „VOID · Infos“ in OBS (Titel und Statuszeilen gibt es immer);
+  infos                       optional: weitere Felder unter Infos in der VOID-Studio-Oberfläche (Titel und Statuszeilen gibt es immer);
                               Namen wie in INFO_KEYS in core/core.js
   script_settings             optional: Voreinstellungen für VOID Studio in der Szenensammlung
   fonts, licenses             Schriften {Platzhalter: [Dateiname, Quelle]} und Lizenzen {Name: fontsource-Ordner}

@@ -6,7 +6,7 @@ Neun OBS-Szenen für Streams unterwegs, mit einer bis vier Kameras: Stream start
 
 1. Einmalig VOID Studio einrichten: Python 3.11 oder 3.12 (64 Bit) installieren und in OBS unter Werkzeuge → Skripte → Python-Einstellungen eintragen. Dann `void-studio.py` aus dem neuesten Release unter Werkzeuge → Skripte → `+` hinzufügen.
 2. Im VOID-Studio-Fenster „IRL“ auswählen und „Installieren / aktualisieren“ klicken. VOID Studio richtet die Szenensammlung dabei gleich in OBS ein.
-3. In OBS Szenensammlung → „VOID IRL“ wählen. Steht sie noch nicht im Menü, OBS einmal neu starten. (Alternativ: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
+3. OBS einmal neu starten (OBS liest Szenensammlungen nur beim Start ein), dann Szenensammlung → „VOID IRL“ wählen. (Alternativ: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
 4. Kameras einrichten (siehe unten).
 5. „Mit Twitch verbinden“ – nur einmal für alle Packs.
 
@@ -30,7 +30,7 @@ VOID Studio überwacht **Kamera 1**. Bricht das Signal in einer Kamera-Szene ab,
 
 ## Ort, Wetter und Kameranamen
 
-In der Szene **„VOID · Infos“** stehen die Textquellen „Info · Ort“, „Info · Wetter-Ort“, „Info · Kamera 1“ bis „Info · Kamera 4“ sowie „Info · Titel“ und „Info · Statuszeilen“. Doppelklick, Text eintragen – das HUD übernimmt ihn sofort, auch unterwegs per Fernsteuerung von OBS. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; „Info · Wetter-Ort“ nimmt einen anderen Ort fürs Wetter.
+In der VOID-Studio-Oberfläche unter **Infos**: Ort, Wetter-Ort, Kamera 1 bis Kamera 4, Titel und Statuszeilen. Das HUD übernimmt Änderungen sofort – auch vom Handy, wenn in VOID Studio „Auch im Heimnetz erreichbar“ an ist und das Handy den PC erreicht. Gibt der Browser den Standort frei (bei HTTPS oder direkt am PC), übernimmt „Standort übernehmen“ Ort und Wetter auf Knopfdruck oder laufend; ins Bild kommt dabei nur die Stadt bzw. der Stadtteil. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; Wetter-Ort nimmt einen anderen Ort fürs Wetter.
 
 ## HUD und feste Parameter
 

@@ -106,7 +106,7 @@ document.head.prepend(el('style','',`
      {type:'state', paused, volume, sounds, latest, session, goals, counts, show_latest, latest_items}
      {type:'chat', id, uid, user, color, badges, frags} · chat_delete · chat_delete_user · chat_clear
      {type:'badges', map} · {type:'control', action:'skip'} · {type:'telemetry', data} · {type:'irl', live, since}
-     {type:'info', data:{Label: Text}} – Textquellen „Info · …“ aus OBS
+     {type:'infos', packs:{<id>:{Label: Text}}} – Infos je Pack aus VOID Studio
    ========================================================= */
 let STATE={paused:false,volume:70,sounds:{},latest:{},session:null,goals:[],counts:{}};
 let BADGES={};
@@ -264,12 +264,14 @@ function addChat(c){
 }
 function chatRemove(sel){chatLogs.forEach(L=>L.box.querySelectorAll(sel).forEach(n=>n.classList.add('gone')))}
 
-/* ---------- Infos aus OBS: Szene „VOID · Infos“, Textquellen „Info · …“ (VOID Studio schickt sie) ----------
+/* ---------- Infos je Pack (VOID Studio → Infos): {type:'infos', packs:{<id>:{Label: Text}}} ----------
+   Das Pack steht im eigenen Pfad (…/packs/<id>/ bzw. void-theme-<id>/); andere Packs werden ignoriert.
    Ein Wert ersetzt den gleichnamigen Parameter der Einstiegsdatei; die Szene lädt dafür einmal neu (nach einem
    laufenden Alert). Leerer Text = Parameter bzw. Standard. Mehrere Zeilen werden zu A|B|C. */
 const INFO_KEYS={'Titel':'title','Statuszeilen':'sub','Charakter':'char','Spiel':'game','Entwickler':'dev','Status':'status',
   'Wunschliste':'wish','Spiele des Abends':'games','Strecke':'track','Auto':'car','Serie':'series','Ort':'place','Wetter-Ort':'wx',
   'Splash':'splash','Kamera 1':'cam1','Kamera 2':'cam2','Kamera 3':'cam3','Kamera 4':'cam4'};
+const PACK_ID=((location.pathname.match(/\/packs\/([^\/]+)\/[^\/]*$/)||[])[1]||'').replace(/^void-theme-/,'');
 function applyInfo(d){
   const want={};
   Object.entries(d||{}).forEach(([label,raw])=>{const k=INFO_KEYS[label];if(!k)return;
@@ -299,7 +301,7 @@ function onMessage(e){
     case 'control':if(e.action==='skip'&&skipNow)skipNow();break;
     case 'telemetry':hooks.tele.forEach(f=>f(e.data));break;
     case 'irl':hooks.irl.forEach(f=>f(e));break;
-    case 'info':applyInfo(e.data);break;
+    case 'infos':if(PACK_ID&&e.packs)applyInfo(e.packs[PACK_ID]||{});break;
     default:pushAlert(e);
   }
 }

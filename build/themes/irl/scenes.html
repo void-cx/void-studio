@@ -180,8 +180,10 @@ const clockText=()=>new Date().toLocaleTimeString('de-DE',{hour:'2-digit',minute
 /* Wetter von Open-Meteo (ohne Schlüssel): Standort aus &lat/&lon, sonst per Namen aus &wx oder dem Ort (bis zum „·“) */
 const WEATHER={text:'',hooks:[]};
 function weather(){
-  const lat=parseFloat(P.get('lat')),lon=parseFloat(P.get('lon'));
-  const name=(P.get('wx')||(P.get('place')||'').split('·')[0]).trim();
+  /* Wetter-Ort als „53.55,9.99“ (setzt die Standort-Übernahme in VOID Studio) zählt wie &lat/&lon */
+  const xy=/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(P.get('wx')||'');
+  const lat=xy?parseFloat(xy[1]):parseFloat(P.get('lat')),lon=xy?parseFloat(xy[2]):parseFloat(P.get('lon'));
+  const name=xy?'':(P.get('wx')||(P.get('place')||'').split('·')[0]).trim();
   if(TEST&&!(isFinite(lat)&&isFinite(lon))&&!P.get('wx')){WEATHER.text='14 °C · teils bewölkt';return}
   const at=isFinite(lat)&&isFinite(lon)?Promise.resolve([lat,lon])
     :name?fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&language=de&name=${encodeURIComponent(name)}`).then(r=>r.json())
