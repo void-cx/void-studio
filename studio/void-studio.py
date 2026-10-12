@@ -27,7 +27,7 @@ import base64, collections, io, json, os, queue, socket, ssl, struct, sys, threa
 import urllib.error, urllib.parse, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-STUDIO_VERSION = "1.1.0"
+STUDIO_VERSION = "1.1.1"
 DEFAULT_REPO = "void-cx/void-studio"            # GitHub owner/repo – in den Einstellungen änderbar
 PORTAL_STUDIO = "https://my.void.cx/studio"     # VOID Studio im Portal: Stream-Statistiken, Go-Live im Discord, Downloads
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -500,6 +500,8 @@ def web_state():
         "settings": dict({k: cfg[k] for k in BOOL_SETTINGS + tuple(INT_SETTINGS) + STR_SETTINGS},
                          latest_items=cfg["latest_items"], ignore=", ".join(sorted(cfg["ignore"]))),
         "local_url": local, "remote_urls": remote, "port": cfg["port"],
+        "portal": PORTAL_STUDIO,
+        "listeners": len(clients),
     }
 
 
@@ -1536,63 +1538,19 @@ def in_thread(fn, *a):
     threading.Thread(target=fn, args=a, daemon=True).start()
 
 
-def selected(props):
-    return obs.obs_data_get_string(settings_ref[0], "pack") if settings_ref[0] else ""
 
 
 settings_ref = [None]
 
 
-def ui_check(props, prop):
-    check_updates()
-    fill_packs(props)
-    return True
 
 
-def ui_install(props, prop):
-    pid = selected(props)
-    if pid:
-        install_pack(pid)                      # wenige MB; danach steht der neue Stand gleich in der Liste
-        fill_packs(props)
-    return True
 
 
-def ui_install_all(props, prop):
-    todo = [p["id"] for p in pack_list() if p.get("installed") and status_of(p).startswith("Update")]
-    if not todo:
-        log("Alle installierten Packs sind aktuell.")
-    for pid in todo:
-        install_pack(pid)
-    fill_packs(props)
-    return True
 
 
-def ui_remove(props, prop):
-    pid = selected(props)
-    if pid:
-        remove_pack(pid)
-        fill_packs(props)
-    return True
 
 
-def ui_setup(props, prop):
-    pid = selected(props)
-    if pid and installed(pid):
-        setup_collection(pid)
-    elif pid:
-        log("Erst installieren, dann einrichten.")
-    fill_packs(props)
-    return True
-
-
-def ui_open(props, prop):
-    pid = selected(props)
-    d = os.path.join(PACKS_DIR, pid) if pid and os.path.isdir(os.path.join(PACKS_DIR, pid)) else PACKS_DIR
-    try:
-        os.startfile(d)                       # Windows
-    except AttributeError:
-        webbrowser.open("file://" + d)
-    return False
 
 
 def ui_studio(props, prop):
@@ -1621,14 +1579,11 @@ def ui_web(*_):
     return False
 
 
-def ui_portal(*_):
-    webbrowser.open(PORTAL_STUDIO)
-    return False
 
 
 def script_description():
-    return ("<b>VOID Studio</b><br>Szenen-Packs verwalten und die VOID Twitch Bridge – Alerts, Sounds, Chat, "
-            "Ziele und Rückblick ohne Fremddienst.<br>Ausgaben unter „Skript-Protokoll“. "
+    return ("<b>VOID Studio</b><br>Szenen-Packs, Infos und die VOID Twitch Bridge – Alerts, Sounds, Chat, Ziele und "
+            "Rückblick ohne Fremddienst. Bedient wird alles in der Web-Oberfläche („VOID Studio öffnen“).<br>"
             "Hotkeys unter Einstellungen → Tastenkürzel („VOID: …“).")
 
 
@@ -1710,129 +1665,47 @@ def tip(prop, text):
 
 
 def script_properties():
+    """Das Skript-Fenster zeigt nur noch Status, den Weg zur Web-Oberfläche und die Technik. Packs, Infos, Alerts,
+    Twitch und alle anderen Einstellungen stehen in der Oberfläche (/studio)."""
     if mgr["index"] is None:
-        check_updates(timeout=8)               # erstes Öffnen: Liste sofort holen, sonst bliebe sie leer
+        check_updates(timeout=8)               # erstes Öffnen: Status und Studio-Update gleich zeigen
     p = obs.obs_properties_create()
     INFO = getattr(obs, "OBS_TEXT_INFO", obs.OBS_TEXT_DEFAULT)
     obs.obs_properties_add_text(p, "studio_info", studio_head(), INFO)
-
-    def packs(g):
-        tip(obs.obs_properties_add_list(g, "pack", "Pack", obs.OBS_COMBO_TYPE_LIST, obs.OBS_COMBO_FORMAT_STRING),
-            "Pack auswählen, dann installieren, aktualisieren, Ordner öffnen oder entfernen.")
-        tip(obs.obs_properties_add_button(g, "m_install", "Installieren / aktualisieren", ui_install),
-            "Ein neues Pack wird dabei gleich als Szenensammlung in OBS eingerichtet.")
-        tip(obs.obs_properties_add_button(g, "m_setup", "In OBS einrichten", ui_setup),
-            "Legt die Szenensammlung des Packs in OBS an oder erneuert sie nach einem Update. "
-            "Kamera, Spielaufnahme und eigene Quellen bleiben. Nicht für die gerade aktive Sammlung.")
-        tip(obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (import.json)", ui_open),
-            "Darin liegt import.json, falls du lieber über Szenensammlung → Importieren gehst.")
-        obs.obs_properties_add_button(g, "m_remove", "Entfernen", ui_remove)
-        obs.obs_properties_add_button(g, "m_check", "Nach Updates suchen", ui_check)
-        obs.obs_properties_add_button(g, "m_all", "Alle Pack-Updates installieren", ui_install_all)
-        obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
-        other = running_elsewhere()
-        if other:
-            obs.obs_properties_add_text(g, "studio_where", (
-                f"Dieses Skript läuft aus {other}. Updates landen in beiden Dateien, sicherer ist aber die zentrale Kopie: "
-                f"unter Werkzeuge → Skripte dieses Skript entfernen und mit + {STUDIO_PATH} hinzufügen. "
-                "Die Packs nutzen sie ohnehin."), INFO)
-            obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
     def webui(g):
         local, remote = web_urls()
         if settings_ref[0] is not None:
             obs.obs_data_set_string(settings_ref[0], "web_url", local)
+        obs.obs_properties_add_button(g, "w_open", "VOID Studio öffnen", ui_web)
         tip(obs.obs_properties_add_text(g, "web_url", "Adresse", obs.OBS_TEXT_DEFAULT),
             "Zum Kopieren. Als Dock: Docks → Benutzerdefinierte Browser-Docks → Name „VOID Studio“, diese Adresse.")
-        obs.obs_properties_add_button(g, "w_open", "Im Browser öffnen", ui_web)
         tip(obs.obs_properties_add_bool(g, "remote_on", "Auch im Heimnetz erreichbar (Handy, Tablet)"),
-            "Andere Geräte im selben Netz öffnen die Oberfläche mit Schlüssel. "
-            "Den Link zeigt die Oberfläche unter Einstellungen.")
+            "Andere Geräte im selben Netz öffnen die Oberfläche mit Schlüssel. Den Link zeigt die Oberfläche unter Einstellungen.")
         if remote:
             obs.obs_properties_add_text(g, "w_remote", "Im Heimnetz: " + "  ·  ".join(remote), INFO)
-
-    def twitch(g):
-        obs.obs_properties_add_text(g, "twitch_status", twitch_status(), INFO)
-        tip(obs.obs_properties_add_button(g, "login", "Mit Twitch verbinden", on_login),
-            "Öffnet die Bestätigung bei Twitch im Browser. Gilt für alle Packs.")
-        obs.obs_properties_add_button(g, "logout", "Abmelden", on_logout)
-        tip(obs.obs_properties_add_button(g, "portal", "Stream-Statistiken im Portal öffnen", ui_portal),
-            "my.void.cx/studio: Zuschauer, Chat, Follower und Abos deiner Streams.")
-
-    def alerts(g):
-        obs.obs_properties_add_int_slider(g, "volume", "Lautstärke", 0, 100, 1)
-        obs.obs_properties_add_button(g, "c_replay", "Letzten Alert wiederholen", ctl_replay)
-        obs.obs_properties_add_button(g, "c_pause", "Alerts pausieren / fortsetzen", ctl_pause)
-        obs.obs_properties_add_button(g, "c_skip", "Aktuellen Alert überspringen", ctl_skip)
-
-    def tests(g):
-        for key, label in [("follow", "Follow"), ("sub", "Abo"), ("resub", "Abo verlängert"), ("gift", "Geschenk-Abos"),
-                           ("cheer", "Bits"), ("raid", "Raid"), ("redeem", "Kanalpunkte")]:
-            obs.obs_properties_add_button(g, "t_" + key, label,
-                                          lambda props, prop, k=key: (alert(dict(SAMPLES[k]), count=False), False)[1])
-        obs.obs_properties_add_button(g, "t_chat", "Chatnachricht", test_chat)
-
-    def goals(g):
-        obs.obs_properties_add_int(g, "goal_follow", "Follower-Ziel", 0, 10000000, 1)
-        obs.obs_properties_add_int(g, "goal_sub", "Abo-Ziel", 0, 1000000, 1)
-        obs.obs_properties_add_int(g, "goal_bits", "Bits-Ziel", 0, 100000000, 100)
-        obs.obs_properties_add_button(g, "c_bits", "Bits-Ziel zurücksetzen", ctl_reset_bits)
-
-    def scenes(g):
-        tip(obs.obs_properties_add_bool(g, "show_latest", "Letzte Unterstützer an der Game-Kamera zeigen"),
-            "Erscheint in den Spielszenen über den Zielen.")
-        for k, label in [("follow", "Follow"), ("sub", "Abo"), ("gift", "Geschenk"), ("cheer", "Bits"), ("raid", "Raid")]:
-            obs.obs_properties_add_bool(g, "latest_" + k, "   " + label)
-        tip(obs.obs_properties_add_button(g, "c_session", "Session-Rückblick zurücksetzen", ctl_reset_session),
-            "Der Rückblick in „Stream endet“ zählt ab hier neu.")
-
-    def chat(g):
-        tip(obs.obs_properties_add_text(g, "ignore", "Ausgeblendete Namen", obs.OBS_TEXT_DEFAULT),
-            "Kommagetrennt, z. B. Bots wie streamelements, nightbot.")
-        obs.obs_properties_add_bool(g, "hide_cmd", "Befehle mit ! ausblenden")
-
-    def telemetry(g):
-        obs.obs_properties_add_bool(g, "tele_on", "Spiel-Telemetrie weiterreichen")
-        tip(obs.obs_properties_add_text(g, "tele_url", "Telemetrie-URL", obs.OBS_TEXT_DEFAULT),
-            "Funbit-Format, z. B. http://127.0.0.1:25555/api/ets2/telemetry")
-
-    def irl_group(g):
-        tip(obs.obs_properties_add_bool(g, "irl_auto", "Bei Abbruch auf „Verbindung weg“ schalten"),
-            "Nur aus den Kamera-Szenen (Unterwegs, Zwei Kameras, Bild im Bild, Vier Kameras, Just Chatting); "
-            "kommt das Signal zurück, geht es in die Szene von vorher.")
-        tip(obs.obs_properties_add_text(g, "irl_source", "Kamera-Quelle", obs.OBS_TEXT_DEFAULT),
-            "Name der Medienquelle, die überwacht wird. Standard: Kamera 1")
-        obs.obs_properties_add_int(g, "irl_delay", "Umschalten nach (Sekunden)", 1, 60, 1)
-        obs.obs_properties_add_int(g, "irl_back", "Zurück nach stabilem Signal (Sekunden)", 1, 60, 1)
+        up = obs.obs_properties_add_button(g, "m_studio", "VOID Studio aktualisieren", ui_studio)
+        obs.obs_property_set_visible(up, False)              # fill_packs zeigt ihn, wenn es ein Update gibt
+        other = running_elsewhere()
+        if other:
+            obs.obs_properties_add_text(g, "studio_where", (
+                f"Dieses Skript läuft aus {other}. Updates landen in beiden Dateien, sicherer ist aber die zentrale Kopie: "
+                f"unter Werkzeuge → Skripte dieses Skript entfernen und mit + {STUDIO_PATH} hinzufügen."), INFO)
+            obs.obs_properties_add_button(g, "m_central", "Ordner der zentralen Kopie öffnen", ui_open_central)
 
     def tech(g):
         tip(obs.obs_properties_add_int(g, "port", "Lokaler Port", 1024, 65535, 1),
-            "Über diesen Port holen sich die Szenen die Live-Daten. Nur ändern, wenn 8787 belegt ist.")
+            "Über diesen Port laufen Oberfläche und Szenen. Nur ändern, wenn 8787 belegt ist.")
         tip(obs.obs_properties_add_text(g, "repo", "Pack-Quelle", obs.OBS_TEXT_DEFAULT),
             "GitHub owner/repo oder eine eigene URL. Standard: " + DEFAULT_REPO)
 
-    group(p, "g_packs", "Szenen-Packs",
-          "Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Texte wie Spielname oder Ort "
-          "trägst du in der Web-Oberfläche unter Infos ein.", packs)
     group(p, "g_web", "Web-Oberfläche",
-          "Alles aus diesem Fenster und die Infos (Spielname, Ort …) übersichtlich im Browser oder als Dock in OBS.", webui)
-    group(p, "g_twitch", "Twitch", None, twitch)
-    group(p, "g_alerts", "Alerts",
-          "Einblendung mit Sound bei Follow, Abo, Bits, Raid und Kanalpunkten. Eigene Sounds: " + SOUND_DIR, alerts)
-    group(p, "g_tests", "Testen", "Schickt eine Beispiel-Einblendung an alle offenen Szenen, ohne Twitch.", tests)
-    group(p, "g_goals", "Ziele", "Fortschrittsbalken in den Szenen. 0 blendet ein Ziel aus.", goals)
-    group(p, "g_scenes", "Spielszenen und Rückblick", None, scenes)
-    group(p, "g_chat", "Chat", None, chat)
-    group(p, "g_tele", "Telemetrie (ETS2/ATS)", "Für die Szene „ETS2 Telemetrie“; braucht einen laufenden Telemetrie-Server.", telemetry)
-    group(p, "g_irl", "IRL", "Für das IRL-Pack: überwacht die Kamera-Quelle und schaltet bei einem Abbruch selbst um.", irl_group)
+          "Packs, Infos (Spielname, Ort …), Alerts, Ziele, Twitch und alle Einstellungen – im Browser oder als Dock in OBS.", webui)
     group(p, "g_tech", "Technik", None, tech)
     fill_packs(p)
     return p
 
 
-def on_login(props, prop):
-    threading.Thread(target=device_login, daemon=True).start()
-    return False
 
 
 def on_logout(props, prop):
@@ -1966,6 +1839,7 @@ nav.tabs button{display:flex;align-items:center;gap:8px;color:var(--muted);paddi
 nav.tabs button:hover{color:var(--ink);background:var(--raised)}
 nav.tabs button.on{color:var(--ink);background:var(--violet-tint);box-shadow:inset 2px 0 0 var(--violet)}
 .side-foot{margin-top:auto;border-top:1px solid var(--line);padding-top:12px;display:flex;flex-direction:column;gap:6px;align-items:flex-start}
+.side-foot .chip{max-width:100%;overflow:hidden;text-overflow:ellipsis;display:block}
 main{padding:32px 40px 80px;min-width:0;max-width:1180px}
 .page-head{margin-bottom:24px}.page-head p{margin-top:6px;color:var(--muted);max-width:72ch}
 @media (max-width:760px){
@@ -2074,7 +1948,8 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
     <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
       <div class="card stack">
-        <div><h2>Alerts</h2><p class="lead" id="alert-state"></p></div>
+        <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
+        <p class="lead" id="alert-state" style="margin:0"></p>
         <div class="field"><label>Lautstärke <span id="vol-v" class="muted"></span></label><input type="range" min="0" max="100" id="volume"></div>
         <div class="row">
           <button class="btn btn-sm" data-act="pause" id="pause-btn">Pausieren</button>
@@ -2141,6 +2016,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
           <button class="btn btn-sm btn-primary" data-act="twitch_login">Mit Twitch verbinden</button>
           <button class="btn btn-sm" data-act="twitch_logout" data-confirm="Von Twitch abmelden?">Abmelden</button>
         </div>
+        <p class="small muted">Stream-Statistiken, Go-Live im Discord und mehr: <a id="portal-link" target="_blank" rel="noopener">VOID Studio im Portal</a></p>
       </div>
       <div class="card stack">
         <h2>Chat</h2>
@@ -2152,7 +2028,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
         <label class="check"><input type="checkbox" data-set="show_latest">Letzte Unterstützer an der Game-Kamera zeigen</label>
         <div id="latest-items" class="stack" style="gap:8px;padding-left:28px"></div>
       </div>
-      <div class="card stack">
+      <div class="card stack" id="set-irl">
         <div><h2>IRL</h2><p class="lead">Überwacht die Kamera-Quelle und schaltet bei einem Abbruch auf „Verbindung weg“ und zurück.</p></div>
         <label class="check"><input type="checkbox" data-set="irl_auto">Bei Abbruch automatisch umschalten</label>
         <div class="field"><label>Kamera-Quelle</label><input type="text" data-set="irl_source"></div>
@@ -2161,7 +2037,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
           <div class="field"><label>Zurück nach (s)</label><input type="number" min="1" max="60" data-set="irl_back"></div>
         </div>
       </div>
-      <div class="card stack">
+      <div class="card stack" id="set-tele">
         <h2>Telemetrie (ETS2/ATS)</h2>
         <label class="check"><input type="checkbox" data-set="tele_on">Spiel-Telemetrie weiterreichen</label>
         <div class="field"><label>Telemetrie-URL</label><input type="text" data-set="tele_url"></div>
@@ -2221,23 +2097,26 @@ function setVal(inp,v){if(document.activeElement===inp||busy.has(inp))return;
 function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
 
 /* ---------- Infos (je Pack, gespeichert in VOID Studio) ---------- */
-let infoKeys='',infoPack=null;
-try{infoPack=localStorage.getItem('voidInfoPack')}catch(_){}
-$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;try{localStorage.setItem('voidInfoPack',infoPack)}catch(_){};infoKeys='';renderInfos()};
+/* Folgt der aktiven Szenensammlung: wechselt sie in OBS, springt die Auswahl mit. Ein anderes Pack lässt sich
+   wählen; das gilt bis zum nächsten Wechsel der Sammlung. */
+let infoKeys='',infoPack=null,lastActive;
+$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;infoKeys='';renderInfos()};
 function renderInfos(){
   const packs=S.infos||[],form=$('#infos-form'),sel=$('#infos-pack');
   if(!packs.length){$('#infos-title').textContent='Infos';form.innerHTML='';infoKeys='';
     $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';$('#infos-pack-row').classList.add('hidden');$('#geo').classList.add('hidden');return}
   /* Vorauswahl: zuletzt gewählt, sonst das Pack der aktiven Szenensammlung, sonst das erste */
-  if(!packs.some(p=>p.id===infoPack))infoPack=(S.pack&&packs.some(p=>p.id===S.pack.id))?S.pack.id:packs[0].id;
+  const active=S.pack&&packs.some(p=>p.id===S.pack.id)?S.pack.id:null;
+  if(active!==lastActive){lastActive=active;if(active)infoPack=active}
+  if(!packs.some(p=>p.id===infoPack))infoPack=active||packs[0].id;
   const opts=packs.map(p=>`${p.id}:${p.name}`).join('|');
   if(sel.dataset.o!==opts){sel.dataset.o=opts;sel.innerHTML=packs.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
   sel.value=infoPack;$('#infos-pack-row').classList.toggle('hidden',packs.length<2);
   const pack=packs.find(p=>p.id===infoPack),list=[...pack.fields.filter(f=>!f.multiline),...pack.fields.filter(f=>f.multiline)];
   renderGeo(pack);
   $('#infos-title').textContent=`Infos · ${pack.name}`;
-  $('#infos-sub').textContent='Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+
-    (S.pack&&S.pack.id!==pack.id?` Gerade aktiv in OBS: ${S.pack.name}.`:'');
+  $('#infos-sub').textContent=(active===pack.id?'Für die aktive Szenensammlung in OBS. ':active?`Aktiv in OBS ist ${S.pack.name} – hier bearbeitest du ein anderes Pack. `:'Die aktive Szenensammlung gehört zu keinem Pack. ')+
+    'Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.';
   const keys=pack.id+'|'+list.map(i=>i.label).join('|');
   if(keys!==infoKeys){
     infoKeys=keys;form.innerHTML='';
@@ -2362,7 +2241,13 @@ function render(){
   const ss=S.live.session||{},cnt=o=>Object.values(o||{}).reduce((a,b)=>a+b,0);
   $('#session').innerHTML=[['Neue Follower',(ss.follows||[]).length],['Abos',(ss.subs||[]).length],['Verschenkte Abos',cnt(ss.gifts)],['Bits',cnt(ss.bits)],
     ['Raids',(ss.raids||[]).length],['Follower gesamt',S.live.followers],['Abonnenten',S.live.subs]].map(([k,v])=>`<dt>${k}</dt><dd>${v==null?'–':num(v)}</dd>`).join('');
-  const irlOn=S.irl.auto||(S.pack&&S.pack.id==='irl');
+  const pid=S.pack&&S.pack.id;
+  const irlOn=S.irl.auto||pid==='irl';
+  $('#set-irl').classList.toggle('hidden',!irlOn);
+  $('#set-tele').classList.toggle('hidden',!(S.settings.tele_on||pid==='ets2'));
+  const n=S.listeners||0;$('#listeners').textContent=n===1?'1 Szene verbunden':`${n} Szenen verbunden`;
+  $('#listeners').className='chip chip-sm '+(n?'chip-ok':'chip-warn');
+  $('#listeners').title=n?'So viele Browserquellen hören gerade auf VOID Studio.':'Keine Szene verbunden – Alerts kommen nirgends an. Ist die Pack-Sammlung in OBS aktiv?';
   $('#irl-card').classList.toggle('hidden',!irlOn);
   if(irlOn){const since=S.irl.since?Math.max(0,Math.round(Date.now()/1000-S.irl.since)):0;
     $('#irl-state').innerHTML=S.irl.live==null?`„${esc(S.irl.source)}“ wird überwacht, sobald die Quelle in der Sammlung ist.`
@@ -2381,6 +2266,7 @@ function render(){
     </div></div></div>`}).join('')||'<p class="muted">Pack-Liste wird geladen …</p>';
   /* Einstellungen */
   $('#twitch-state').textContent=tw.status;
+  $('#portal-link').href=S.portal;
   $('#device').classList.toggle('hidden',!tw.device);
   if(tw.device){$('#device-code').textContent=tw.device.code;$('#device-link').href=tw.device.url;$('#device-link').textContent=tw.device.url.replace(/^https?:\/\//,'')}
   $$('[data-set]').forEach(i=>setVal(i,S.settings[i.dataset.set]));
