@@ -117,6 +117,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   <nav class="tabs" id="tabs">
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
+    <button data-tab="alerts">Alerts</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -146,8 +147,32 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   </section>
 
   <section id="tab-live" class="hidden">
-    <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
+    <div class="page-head"><h1>Live</h1><p>OBS steuern, Stream im Blick, Alerts, Ziele, Timer und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Stream</h2><span class="chip chip-sm" id="stream-chip"></span></div>
+        <dl class="meta" id="stream-stats"></dl>
+        <div class="row"><button class="btn btn-sm" id="stream-btn"></button><button class="btn btn-sm" id="rec-btn"></button></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Szenen</h2><p class="lead">Ein Klick schaltet in OBS um.</p></div>
+        <div class="row" id="scene-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Audio</h2><p class="lead">Quellen stumm schalten und wieder an.</p></div>
+        <div class="row" id="audio-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Timer</h2><p class="lead">Countdown in „Stream startet“, Pausen-Timer in „Kurze Pause“.</p></div>
+        <div class="field"><label>Countdown bis Stream-Start <span class="muted" id="timer-start-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-start-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="start" data-min="#timer-start-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="start">Stopp</button></div></div>
+        <div class="field"><label>Pausen-Timer <span class="muted" id="timer-pause-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-pause-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="pause" data-min="#timer-pause-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="pause">Stopp</button></div></div>
+      </div>
       <div class="card stack">
         <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
         <p class="lead" id="alert-state" style="margin:0"></p>
@@ -187,8 +212,28 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       <div class="card stack hidden" id="irl-card">
         <h2>IRL</h2>
         <p id="irl-state"></p>
+        <div class="row" id="irl-cams"></div>
       </div>
     </div>
+  </section>
+
+  <section id="tab-alerts" class="hidden">
+    <div class="page-head"><h1>Alerts</h1><p>Je Alert-Art an/aus, Lautstärke, Mindestwert, eigene Texte und Sounds; dazu Aktionen für Kanalpunkte. Gilt für alle Packs.</p></div>
+    <div class="grid" id="alert-cards"></div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card stack span-all">
+        <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten.</p>
+        <div id="rules" class="stack"></div>
+        <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
+      </div>
+      <div class="card stack span-all">
+        <div><h2>Sounds für Kanalpunkte</h2><p class="lead" style="margin:0">MP3, OGG oder WAV bis 5 MB. Die Sounds je Alert-Art stehen oben bei der jeweiligen Art.</p></div>
+        <div id="extra-sounds" class="stack" style="gap:8px"></div>
+        <div><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="" hidden></label></div>
+      </div>
+    </div>
+    <datalist id="reward-titles"></datalist>
   </section>
 
   <section id="tab-packs" class="hidden">
@@ -412,7 +457,10 @@ document.addEventListener('click',async ev=>{
   if(b){
     if(b.dataset.confirm&&!confirm(b.dataset.confirm))return;
     b.disabled=true;
-    try{const r=await api('/api/control',{action:b.dataset.act,id:b.dataset.id});S=r.state;render();if(r.message)toast(r.message)}
+    const body={action:b.dataset.act,id:b.dataset.id};
+    if(b.dataset.min)body.minutes=parseFloat($(b.dataset.min).value||'0');
+    if(b.dataset.on!=null)body.on=b.dataset.on==='1';
+    try{const r=await api('/api/control',body);S=r.state;render();if(r.message)toast(r.message)}
     catch(e){toast(e.message)}
     finally{b.disabled=false}
     return;
@@ -476,7 +524,113 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
+  renderObs();renderAlerts();
 }
+
+/* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
+const hms=s=>{s=Math.max(0,s|0);const h=s/3600|0,m=(s%3600)/60|0;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')};
+function setBtn(b,act,label,primary,confirmText){b.dataset.act=act;b.textContent=label;b.classList.toggle('btn-primary',!!primary);
+  if(confirmText)b.dataset.confirm=confirmText;else delete b.dataset.confirm}
+function renderObs(){
+  const o=S.obs||{},st=o.stats||{};
+  $('#stream-chip').textContent=o.streaming?`Live · ${hms(Date.now()/1000-(o.since||Date.now()/1000))}`:(o.recording?'Aufnahme läuft':'Offline');
+  $('#stream-chip').className='chip chip-sm '+(o.streaming?'chip-live chip-ok':o.recording?'chip-warn':'');
+  const pct=(a,b)=>b?` (${(a/b*100).toFixed(1).replace('.',',')} %)`:'';
+  const rows=[];
+  if(o.streaming){rows.push(['Bitrate',st.kbps!=null?num(st.kbps)+' kbit/s':'–']);rows.push(['Verlorene Frames (Netz)',num(st.dropped||0)+pct(st.dropped||0,st.frames)])}
+  rows.push(['FPS',st.fps?String(st.fps).replace('.',','):'–']);
+  rows.push(['Verzögert (Rendern)',num(st.lagged||0)+pct(st.lagged||0,st.rendered)]);
+  rows.push(['Übersprungen (Encoder)',num(st.skipped||0)+pct(st.skipped||0,st.encoded)]);
+  $('#stream-stats').innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  setBtn($('#stream-btn'),o.streaming?'stream_stop':'stream_start',o.streaming?'Stream beenden':'Stream starten',!o.streaming,o.streaming?'Stream wirklich beenden?':'Stream jetzt starten?');
+  setBtn($('#rec-btn'),o.recording?'rec_stop':'rec_start',o.recording?'Aufnahme stoppen':'Aufnahme starten',false,o.recording?'Aufnahme stoppen?':null);
+  const sc=(o.scenes||[]).map(n=>`<button class="btn btn-sm ${n===o.current?'btn-primary':''}" data-act="scene" data-id="${esc(n)}">${esc(n)}</button>`).join('');
+  if($('#scene-buttons').innerHTML!==sc)$('#scene-buttons').innerHTML=sc||'<span class="muted small">Keine Szenen gefunden.</span>';
+  const au=(o.audio||[]).map(a=>`<button class="btn btn-sm ${a.muted?'btn-danger':''}" data-act="mute" data-id="${esc(a.name)}" data-on="${a.muted?0:1}">${a.muted?'Stumm: ':''}${esc(a.name)}</button>`).join('');
+  if($('#audio-buttons').innerHTML!==au)$('#audio-buttons').innerHTML=au||'<span class="muted small">Keine Audioquellen.</span>';
+  const left=k=>{const t=(o.timers||{})[k];return t>Date.now()?'noch '+hms((t-Date.now())/1000):''};
+  $('#timer-start-left').textContent=left('start');$('#timer-pause-left').textContent=left('pause');
+  $('#irl-cams').innerHTML=(o.cams||[]).map(c=>`<span class="chip chip-sm ${c.live?'chip-ok':'chip-danger'}">${esc(c.name)}: ${c.live?'Signal':'kein Signal'}</span>`).join('');
+}
+
+/* ---------- Alerts je Art ---------- */
+const ATYPES=[['follow','Follow'],['sub','Abo'],['resub','Abo verlängert'],['gift','Geschenk-Abos'],['cheer','Bits'],['raid','Raid'],['redeem','Kanalpunkte']];
+const MINLBL={cheer:'Erst ab … Bits',gift:'Erst ab … verschenkten Abos',raid:'Erst ab … Leuten'};
+let alertsBuilt=false;
+function soundOf(slot){return (S.sounds||[]).find(x=>x.slot===slot)}
+function buildAlerts(){
+  const box=$('#alert-cards');box.innerHTML='';
+  ATYPES.forEach(([t,l])=>{
+    const c=el('div','card stack');c.dataset.type=t;
+    c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
+      <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
+      ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
+      <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
+      <div class="row"><span class="small muted" data-snd></span></div>
+      <div class="row"><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="${t}" hidden></label>
+        <button class="btn btn-sm btn-danger hidden" data-del>Sound entfernen</button>
+        <button class="btn btn-sm" data-act="test_${t}">Testen</button></div>`;
+    const send=debounce(()=>{const a={};c.querySelectorAll('[data-a]').forEach(i=>a[i.dataset.a]=i.type==='checkbox'?i.checked:(i.type==='range'||i.type==='number')?parseInt(i.value||'0',10):i.value);
+      api('/api/settings',{alerts:{[t]:a}}).then(r=>{S=r.state}).catch(e=>toast('Nicht gespeichert: '+e.message))},600);
+    c.querySelectorAll('[data-a]').forEach(i=>{i.addEventListener(i.type==='checkbox'?'change':'input',send);
+      if(i.type==='range')i.addEventListener('input',()=>c.querySelector('[data-v]').textContent=i.value+' %')});
+    box.append(c);
+  });
+  alertsBuilt=true;
+}
+function renderAlerts(){
+  if(!alertsBuilt)buildAlerts();
+  ATYPES.forEach(([t])=>{
+    const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
+    c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
+    const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
+    c.querySelector('[data-snd]').textContent=snd?`Sound: ${snd.file}`:def?`Sound: ${def.file} (für alle)`:'Sound: eingebauter Klang';
+    const del=c.querySelector('[data-del]');del.classList.toggle('hidden',!snd);del.dataset.file=snd?snd.file:'';
+  });
+  const extra=(S.sounds||[]).filter(x=>!x.slot);
+  const ex=extra.map(x=>`<div class="row"><span>${esc(x.file)}</span><button class="btn btn-sm" data-play="${esc(x.url)}">Anhören</button><button class="btn btn-sm btn-danger" data-act="sound_delete" data-id="${esc(x.file)}" data-confirm="${esc(x.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#extra-sounds').innerHTML!==ex)$('#extra-sounds').innerHTML=ex;
+  $('#reward-titles').innerHTML=(S.reward_titles||[]).map(t=>`<option value="${esc(t)}">`).join('');
+  if(!rulesDirty)renderRules();
+}
+document.addEventListener('click',ev=>{
+  const d=ev.target.closest('[data-del]');
+  if(d&&d.dataset.file&&confirm('Eigenen Sound entfernen?'))api('/api/control',{action:'sound_delete',id:d.dataset.file}).then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast(e.message));
+  const p=ev.target.closest('[data-play]');if(p)new Audio(p.dataset.play).play().catch(()=>toast('Abspielen nicht möglich'));
+});
+document.addEventListener('change',ev=>{
+  const i=ev.target.closest('[data-upload]');if(!i||!i.files[0])return;
+  const file=i.files[0];if(file.size>5*1024*1024){toast('Größer als 5 MB');return}
+  const rd=new FileReader();rd.onload=()=>api('/api/sound',{slot:i.dataset.upload,filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file);i.value='';
+});
+
+/* ---------- Kanalpunkte-Regeln (Entwurf bis „Regeln speichern“) ---------- */
+let rules=null,rulesDirty=false;
+function ruleRow(r,i){
+  const opt=(list,val,none)=>`<option value="">${none}</option>`+list.map(x=>`<option value="${esc(x)}" ${x===val?'selected':''}>${esc(x)}</option>`).join('');
+  const sounds=(S.sounds||[]).map(x=>x.file),scenes=(S.obs&&S.obs.scenes)||[];
+  return `<div class="alert stack" style="gap:10px" data-rule="${i}">
+    <div class="form-grid">
+      <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
+      <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
+      <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
+    </div>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Alert zeigen</label>
+      <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
+}
+function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
+function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.querySelectorAll('[data-r]').forEach(i=>r[i.dataset.r]=i.type==='checkbox'?i.checked:i.type==='number'?parseInt(i.value||'0',10):i.value);return r})}
+$('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
+$('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
+$('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
 
 async function poll(){
   if(!KEY){showNoKey();return}

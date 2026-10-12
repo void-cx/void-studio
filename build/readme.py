@@ -66,7 +66,7 @@ In der VOID-Studio-Oberfläche unter **Infos** (im Skript-Fenster „Im Browser 
 
 **Letzte Unterstützer in Spielszenen:** In den Skript-Einstellungen der Bridge an- und ausschaltbar, dazu Häkchen für Follow, Abo, Geschenk, Bits und Raid. Erscheint an der Game-Kamera über den Zielen.
 
-**Bridge-Daten:** Login, Sounds und Session liegen zentral in `%APPDATA%\\VOID-Bridge\\`, gemeinsam für alle Packs. Eigene Sounds kommen nach `%APPDATA%\\VOID-Bridge\\sounds\\` (`follow.mp3`, `sub.mp3`, `resub.mp3`, `gift.mp3`, `cheer.mp3`, `raid.mp3`, `redeem.mp3` oder `default.mp3`). Die Token-Datei dort wie ein Passwort behandeln.
+**Bridge-Daten:** Login, Sounds und Session liegen zentral in `%APPDATA%\\VOID-Bridge\\`, gemeinsam für alle Packs. Eigene Sounds lädst du in der VOID-Studio-Oberfläche unter **Alerts** hoch (dort auch Lautstärke, Mindestwerte, Texte und Kanalpunkt-Regeln); sie liegen in `%APPDATA%\\VOID-Bridge\\sounds\\` (`follow.mp3`, `sub.mp3`, `resub.mp3`, `gift.mp3`, `cheer.mp3`, `raid.mp3`, `redeem.mp3` oder `default.mp3`). Die Token-Datei dort wie ein Passwort behandeln.
 """
     extra = f"themes/{t['id']}.md"
     if os.path.isfile(extra):

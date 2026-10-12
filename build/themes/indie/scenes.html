@@ -232,7 +232,7 @@ function pause(){
   const bar=put(s,'bar');const bs=[...Array(12)].map(()=>bar.appendChild(el('b')));
   let k=0;setInterval(()=>{k=(k+1)%14;bs.forEach((b,i)=>b.classList.toggle('on',i<k))},380);
   put(s,'hint','Nicht ausschalten.');const t=put(s,'t','Pause seit 00:00');
-  const t0=Date.now();setInterval(()=>t.textContent='Pause seit '+mmss((Date.now()-t0)/1000|0),500);
+  if(!pauseTimer(s=>t.textContent=s>0?'Zurück in '+mmss(s):'Gleich zurück!')){const t0=Date.now();setInterval(()=>t.textContent='Pause seit '+mmss((Date.now()-t0)/1000|0),500)}
   const g=put(stage,'goals','',`position:absolute;left:120px;bottom:120px;width:520px`);goalsInto(g);
   const l=put(stage,'goals','',`position:absolute;left:700px;bottom:120px;width:520px`);latestInto(l);
 }

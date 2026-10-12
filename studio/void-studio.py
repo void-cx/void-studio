@@ -50,8 +50,8 @@ ALERT_TYPES = ("follow", "sub", "resub", "gift", "cheer", "raid", "redeem")
 LATEST_KEYS = ("follow", "sub", "gift", "cheer", "raid")
 cfg = {"repo": DEFAULT_REPO, "show_latest": True, "latest_items": ["follow", "sub", "cheer"], "tele_on": False, "tele_url": "http://127.0.0.1:25555/api/ets2/telemetry",
        "client_id": CLIENT_ID, "port": 8787, "volume": 70, "goal_follow": 0, "goal_sub": 0, "goal_bits": 0,
-       "ignore": set(), "hide_cmd": True, "irl_auto": False, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
-       "remote_on": False}
+       "ignore": set(), "hide_cmd": True, "irl_auto": True, "irl_source": "Kamera 1", "irl_delay": 3, "irl_back": 5,
+       "remote_on": False, "alerts": {}, "rewards": []}
 web = {"key": None, "log": collections.deque(maxlen=40), "device": None}
 stop = threading.Event()
 clients, clients_lock = set(), threading.Lock()
@@ -121,6 +121,7 @@ def snapshot():
             if target > 0 and cur is not None:
                 goals.append({"key": key, "label": label, "cur": cur, "target": target})
         return {"type": "state", "paused": state["paused"], "volume": cfg["volume"], "sounds": sound_map(),
+                "alert_volumes": {t: alert_cfg(t)["volume"] for t in ALERT_TYPES},
                 "show_latest": cfg["show_latest"], "latest_items": cfg["latest_items"],
                 "counts": {"followers": state["followers"], "subs": state["subs"]},
                 "latest": state["latest"], "session": state["session"], "goals": goals}
@@ -172,9 +173,41 @@ def record(ev):
     push_state()
 
 
-def alert(ev, count=True):
-    send_all(ev)
-    log(f"Alert: {ev['type']} – {ev.get('user')}" + ("" if count else " (Test/Wiederholung)"))
+ALERT_DEFAULT = {"on": True, "volume": 100, "min": 0, "kind": "", "detail": ""}
+MIN_ALERTS = ("cheer", "gift", "raid")                 # Mindestwert gilt für Bits, Geschenk-Abos, Raid-Größe
+
+
+def alert_cfg(t):
+    return dict(ALERT_DEFAULT, **(cfg["alerts"].get(t) or {}))
+
+
+def alert_texts(ev, ac):
+    """Eigene Überschrift/Zeile mit Platzhaltern {name} {anzahl} {monate} {stufe} {belohnung}; leer = Standard des Packs."""
+    vals = collections.defaultdict(str, name=ev.get("user", ""), anzahl=ev.get("amount", "") or "",
+                                   monate=ev.get("months", "") or "", stufe=ev.get("tier", "") or "",
+                                   belohnung=ev.get("title", "") or "")
+    def fmt(tpl):
+        try:
+            return tpl.format_map(vals) if tpl else ""
+        except (ValueError, IndexError, AttributeError):
+            return tpl
+    kind, detail = fmt(ac["kind"]), fmt(ac["detail"])
+    return [kind, detail] if kind or detail else None
+
+
+def alert(ev, count=True, test=False):
+    """count: echtes Ereignis (Rückblick, Ziele). test: Vorschau – zeigt den Alert unabhängig von An/Aus und Mindestwert."""
+    t = ev.get("type")
+    ac = alert_cfg(t)
+    rule = reward_rule(ev) if t == "redeem" and count else None
+    show = test or (ac["on"] and not (t in MIN_ALERTS and (ev.get("amount") or 0) < ac["min"])
+                    and not (rule and not rule.get("alert", True)))
+    if show:
+        texts = alert_texts(ev, ac)
+        send_all(dict(ev, texts=texts) if texts else ev)
+    log(f"Alert: {t} – {ev.get('user')}" + ("" if count else " (Test/Wiederholung)") + ("" if show else " – ausgeblendet"))
+    if rule:
+        run_reward(rule, ev)
     if count:
         with lock:
             state["last_alert"] = ev
@@ -502,6 +535,10 @@ def web_state():
                          latest_items=cfg["latest_items"], ignore=", ".join(sorted(cfg["ignore"]))),
         "local_url": local, "remote_urls": remote, "port": cfg["port"],
         "portal": PORTAL_STUDIO,
+        "obs": dict(obs_state, timers=dict(timers), now=int(time.time() * 1000)),
+        "alerts": {t: alert_cfg(t) for t in ALERT_TYPES},
+        "sounds": sound_files(),
+        "rewards": cfg["rewards"], "reward_titles": web["rewards"],
         "listeners": len(clients),
     }
 
@@ -541,6 +578,25 @@ def web_settings(body):
             vals[k] = sorted({n.strip().lower() for n in str(v)[:2000].split(",") if n.strip()})
         elif k == "latest_items":
             vals[k] = [x for x in LATEST_KEYS if x in (v or [])]
+        elif k == "alerts" and isinstance(v, dict):
+            alerts = dict(cfg["alerts"])
+            for t, a in v.items():
+                if t in ALERT_TYPES and isinstance(a, dict):
+                    cur = alert_cfg(t)
+                    cur.update(on=bool(a.get("on", cur["on"])), volume=max(0, min(100, int(a.get("volume", cur["volume"])))),
+                               min=max(0, min(10000000, int(a.get("min", cur["min"])))),
+                               kind=str(a.get("kind", cur["kind"]))[:120], detail=str(a.get("detail", cur["detail"]))[:160])
+                    alerts[t] = cur
+            vals[k] = alerts
+        elif k == "rewards" and isinstance(v, list):
+            clean = []
+            for r in v[:50]:
+                if isinstance(r, dict) and str(r.get("reward", "")).strip():
+                    clean.append({"reward": str(r["reward"]).strip()[:80], "alert": bool(r.get("alert", True)),
+                                  "sound": os.path.basename(str(r.get("sound") or ""))[:80],
+                                  "scene": str(r.get("scene") or "")[:120], "scene_secs": max(0, min(3600, int(r.get("scene_secs") or 0))),
+                                  "source": str(r.get("source") or "")[:120], "source_secs": max(0, min(3600, int(r.get("source_secs") or 0)))})
+            vals[k] = clean
     before = (cfg["port"], cfg["remote_on"])
     apply_settings(vals)
     save_global()
@@ -550,14 +606,24 @@ def web_settings(body):
     push_state()
 
 
-def web_control(action, pid=None, local=False):
+def web_control(action, pid=None, local=False, body=None):
     """Knöpfe der Oberfläche. Langsame Sachen (Downloads) laufen im Hintergrund, die Seite zeigt den Fortschritt."""
     simple = {"replay": ctl_replay, "pause": ctl_pause, "skip": ctl_skip, "reset_session": ctl_reset_session,
               "reset_bits": ctl_reset_bits, "test_chat": test_chat}
     if action in simple:
         simple[action]()
     elif action.startswith("test_") and action[5:] in SAMPLES:
-        alert(dict(SAMPLES[action[5:]]), count=False)
+        alert(dict(SAMPLES[action[5:]]), count=False, test=True)
+    elif action in OBS_ACTIONS:
+        return obs_action(action, pid, body)
+    elif action == "timer_start":
+        return timer_start(str(pid), (body or {}).get("minutes"))
+    elif action == "timer_stop":
+        return timer_stop(str(pid))
+    elif action == "sound_delete" and pid:
+        return sound_delete(str(pid))
+    elif action == "rewards_load":
+        return rewards_load()
     elif action == "twitch_login":
         threading.Thread(target=device_login, args=(local,), daemon=True).start()
     elif action == "twitch_logout":
@@ -580,6 +646,294 @@ def web_control(action, pid=None, local=False):
     else:
         raise ValueError(f"unbekannte Aktion: {action}")
     return None
+
+
+# ---------------------------------------------------------------- Steuerung: OBS, Stream-Zustand, Timer, Sounds, Kanalpunkte
+# Regeln seit 1.0.4: Server-Threads lesen aus libobs, wechseln Szenen und starten Stream/Aufnahme nur über ctypes in
+# einem eigenen Thread (gibt die Python-Sperre ab). Die Szenenliste liest der Oberflächen-Thread (Frontend-Ereignis).
+OBS_ACTIONS = ("scene", "stream_start", "stream_stop", "rec_start", "rec_stop", "mute")
+obs_state = {"scenes": [], "current": None, "streaming": False, "recording": False, "since": None, "stats": {},
+             "audio": [], "cams": []}
+timers = {"start": 0, "pause": 0}                       # Ende als Unix-Zeit in ms, 0 = aus
+TIMER_FILE = os.path.join(DATA_DIR, "timers.json")
+web["rewards"] = []
+
+
+def frontend_call(name, *args):
+    """Frontend-Funktion über ctypes in einem eigenen Thread (die Oberfläche kann dabei Python-Ereignisse auslösen)."""
+    def run():
+        n = native()
+        if n:
+            try:
+                getattr(n[1], name)(*args)
+            except Exception as e:
+                log(f"OBS: {name} fehlgeschlagen ({e})")
+    threading.Thread(target=run, daemon=True).start()
+
+
+def set_muted(name, muted):
+    n = native()
+    if not n:
+        return False
+    import ctypes
+    lib = n[0]
+    lib.obs_source_set_muted.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+    src = lib.obs_get_source_by_name(name.encode("utf-8"))
+    if not src:
+        return False
+    try:
+        lib.obs_source_set_muted(src, bool(muted))
+        return True
+    finally:
+        lib.obs_source_release(src)
+
+
+def obs_action(action, arg, body):
+    if action == "scene":
+        if not source_exists(str(arg or "")):
+            raise ValueError("Szene nicht gefunden")
+        switch_later(str(arg), f"Szene gewechselt: {arg}")
+    elif action in ("stream_start", "stream_stop", "rec_start", "rec_stop"):
+        fn = {"stream_start": "obs_frontend_streaming_start", "stream_stop": "obs_frontend_streaming_stop",
+              "rec_start": "obs_frontend_recording_start", "rec_stop": "obs_frontend_recording_stop"}[action]
+        frontend_call(fn)
+        log({"stream_start": "Stream wird gestartet.", "stream_stop": "Stream wird beendet.",
+             "rec_start": "Aufnahme wird gestartet.", "rec_stop": "Aufnahme wird gestoppt."}[action])
+    elif action == "mute":
+        threading.Thread(target=set_muted, args=(str(arg or ""), bool((body or {}).get("on"))), daemon=True).start()
+    return None
+
+
+def refresh_scene_list():
+    """Im Oberflächen-Thread: Szenen in der Reihenfolge der OBS-Liste."""
+    lst = obs.obs_frontend_get_scenes() or []
+    try:
+        obs_state["scenes"] = [obs.obs_source_get_name(x) for x in lst]
+    finally:
+        if lst:
+            obs.source_list_release(lst)
+
+
+def on_frontend_event(event):
+    if event in (obs.OBS_FRONTEND_EVENT_FINISHED_LOADING, obs.OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED,
+                 obs.OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED):
+        try:
+            refresh_scene_list()
+        except Exception as e:
+            log(f"Szenenliste: {e}")
+
+
+def call(name, *args, default=None):
+    fn = getattr(obs, name, None)
+    try:
+        return fn(*args) if fn else default
+    except Exception:
+        return default
+
+
+def obs_stats_loop():
+    """Alle 2 s: Stream/Aufnahme, Bitrate, Frames, Audio, IRL-Kameras – nur lesend aus libobs."""
+    last = {"bytes": None, "t": None}
+    while not stop.is_set():
+        try:
+            streaming = bool(call("obs_frontend_streaming_active", default=False))
+            if streaming and not obs_state["streaming"]:
+                obs_state["since"] = int(time.time())
+            if not streaming:
+                obs_state["since"] = None
+            st = {}
+            out = call("obs_frontend_get_streaming_output")
+            if out:
+                try:
+                    b, now = call("obs_output_get_total_bytes", out, default=0), time.time()
+                    if streaming and last["bytes"] is not None and b >= last["bytes"] and now > last["t"]:
+                        st["kbps"] = int((b - last["bytes"]) * 8 / (now - last["t"]) / 1000)
+                    last.update(bytes=b, t=now)
+                    st["dropped"] = call("obs_output_get_frames_dropped", out, default=0)
+                    st["frames"] = call("obs_output_get_total_frames", out, default=0)
+                    st["congestion"] = round(float(call("obs_output_get_congestion", out, default=0.0) or 0), 2)
+                finally:
+                    obs.obs_output_release(out)
+            st["fps"] = round(float(call("obs_get_active_fps", default=0.0) or 0), 1)
+            st["lagged"], st["rendered"] = call("obs_get_lagged_frames", default=0), call("obs_get_total_frames", default=0)
+            vid = call("obs_get_video")
+            if vid:
+                st["skipped"] = call("video_output_get_skipped_frames", vid, default=0)
+                st["encoded"] = call("video_output_get_total_frames", vid, default=0)
+            audio, seen = [], set()
+            def look(src):
+                kind = obs.obs_source_get_unversioned_id(src)
+                if kind in ("browser_source", "scene", "group") or not (obs.obs_source_get_output_flags(src) & obs.OBS_SOURCE_AUDIO):
+                    return
+                name = obs.obs_source_get_name(src)
+                if name and name not in seen:
+                    seen.add(name)
+                    audio.append({"name": name, "muted": bool(obs.obs_source_muted(src))})
+            each_source(look)
+            if not obs_state["scenes"]:                  # bis das erste Frontend-Ereignis kommt: ungeordnet aus libobs
+                names = []
+                each_source(lambda x: names.append(obs.obs_source_get_name(x)) if obs.obs_source_get_unversioned_id(x) == "scene" else None)
+                obs_state["scenes"] = sorted(n for n in names if n)
+            cams = []
+            for i in range(1, 5):
+                live = source_live(f"Kamera {i}")
+                if live is not None:
+                    cams.append({"name": f"Kamera {i}", "live": live})
+            obs_state.update(streaming=streaming, recording=bool(call("obs_frontend_recording_active", default=False)),
+                             current=current_scene_name(), stats=st, audio=audio, cams=cams)
+        except Exception as e:
+            obs_state["error"] = str(e)
+        stop.wait(2)
+
+
+# ---------- Countdown und Pausen-Timer: gehen als Parameter until/back an die Start- bzw. Pausen-Szene ----------
+def load_timers():
+    try:
+        with open(TIMER_FILE, encoding="utf-8") as f:
+            timers.update({k: int(v) for k, v in json.load(f).items() if k in timers})
+    except (OSError, ValueError):
+        pass
+
+
+def save_timers():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(TIMER_FILE, "w", encoding="utf-8") as f:
+        json.dump(timers, f)
+
+
+def timer_start(kind, minutes):
+    if kind not in timers:
+        raise ValueError("unbekannter Timer")
+    m = float(minutes or 0)
+    if not 0 < m <= 600:
+        raise ValueError("Minuten zwischen 1 und 600")
+    timers[kind] = int((time.time() + m * 60) * 1000)
+    save_timers()
+    send_all(infos_snapshot())
+    return f"{'Countdown' if kind == 'start' else 'Pausen-Timer'} läuft: {m:g} Minuten."
+
+
+def timer_stop(kind):
+    if kind in timers:
+        timers[kind] = 0
+        save_timers()
+        send_all(infos_snapshot())
+    return None
+
+
+# ---------- Sounds: eigene Dateien je Alert-Art (follow.mp3 …) und weitere für Kanalpunkte ----------
+SOUND_SLOTS = ALERT_TYPES + ("default",)
+
+
+def sound_files():
+    out = []
+    if os.path.isdir(SOUND_DIR):
+        for fn in sorted(os.listdir(SOUND_DIR)):
+            stem, ext = os.path.splitext(fn)
+            if ext.lower() in SOUND_EXT:
+                out.append({"file": fn, "slot": stem if stem in SOUND_SLOTS else "", "url": sound_url(fn)})
+    return out
+
+
+def sound_url(fn):
+    return f"http://127.0.0.1:{cfg['port']}/sounds/{urllib.parse.quote(fn)}"
+
+
+def sound_upload(body):
+    """{slot: Alert-Art | default | "", filename, data (Base64)} – ohne slot: freier Sound für Kanalpunkte."""
+    slot, name = str(body.get("slot") or ""), os.path.basename(str(body.get("filename") or ""))
+    stem, ext = os.path.splitext(name)
+    ext = ext.lower()
+    if ext not in SOUND_EXT:
+        raise ValueError("Nur MP3, OGG oder WAV")
+    if slot and slot not in SOUND_SLOTS:
+        raise ValueError("unbekannte Alert-Art")
+    blob = base64.b64decode(str(body.get("data") or ""), validate=True)
+    if not 0 < len(blob) <= 5 * 1024 * 1024:
+        raise ValueError("Datei leer oder größer als 5 MB")
+    os.makedirs(SOUND_DIR, exist_ok=True)
+    if slot:
+        for old in os.listdir(SOUND_DIR):                # follow.mp3 ersetzt follow.ogg usw.
+            if os.path.splitext(old)[0] == slot:
+                os.remove(os.path.join(SOUND_DIR, old))
+        target = slot + ext
+    else:
+        clean = _re.sub(r"[^a-z0-9_-]+", "-", stem.lower()).strip("-")[:40] or "sound"
+        target = clean + ext
+        if os.path.splitext(target)[0] in SOUND_SLOTS:
+            target = "x-" + target
+    with open(os.path.join(SOUND_DIR, target), "wb") as f:
+        f.write(blob)
+    push_state()
+    return f"Sound gespeichert: {target}"
+
+
+def sound_delete(fn):
+    fn = os.path.basename(fn)
+    p = os.path.join(SOUND_DIR, fn)
+    if os.path.splitext(fn)[1].lower() not in SOUND_EXT or not os.path.isfile(p):
+        raise ValueError("Sound nicht gefunden")
+    os.remove(p)
+    push_state()
+    return f"Sound entfernt: {fn}"
+
+
+# ---------- Kanalpunkte → Aktionen (frei konfigurierbar in der Oberfläche) ----------
+# Regel: {reward, alert (an/aus), sound (Datei), scene + scene_secs (0 = bleiben), source + source_secs (einblenden)}
+def reward_rule(ev):
+    title = (ev.get("title") or "").strip().lower()
+    return next((r for r in cfg["rewards"] if r.get("reward", "").strip().lower() == title and title), None)
+
+
+def set_source_visible(name, visible):
+    """Quelle in der Programmszene ein-/ausblenden (libobs; die Oberfläche folgt über ein gepuffertes Signal)."""
+    tr = obs.obs_get_output_source(0)
+    if not tr:
+        return False
+    try:
+        src = obs.obs_transition_get_active_source(tr)
+        if not src:
+            return False
+        try:
+            scene = obs.obs_scene_from_source(src)
+            item = obs.obs_scene_find_source_recursive(scene, name) if scene else None
+            if item:
+                obs.obs_sceneitem_set_visible(item, bool(visible))
+            return bool(item)
+        finally:
+            obs.obs_source_release(src)
+    finally:
+        obs.obs_source_release(tr)
+
+
+def run_reward(rule, ev):
+    log(f"Kanalpunkte: „{rule.get('reward')}“ von {ev.get('user')}")
+    if rule.get("sound"):
+        send_all({"type": "sound", "url": sound_url(rule["sound"])})
+    if rule.get("scene"):
+        def scene():
+            prev = current_scene_name()
+            if switch_scene(rule["scene"]) and int(rule.get("scene_secs") or 0) > 0 and prev and prev != rule["scene"]:
+                time.sleep(int(rule["scene_secs"]))
+                switch_scene(prev)
+        threading.Thread(target=scene, daemon=True).start()
+    if rule.get("source"):
+        def source():
+            if set_source_visible(rule["source"], True) and int(rule.get("source_secs") or 0) > 0:
+                time.sleep(int(rule["source_secs"]))
+                set_source_visible(rule["source"], False)
+        threading.Thread(target=source, daemon=True).start()
+
+
+def rewards_load():
+    s = session()
+    if not s:
+        raise ValueError("Erst mit Twitch verbinden")
+    j = helix(s, f"channel_points/custom_rewards?broadcaster_id={s['uid']}")
+    if j is None:
+        raise ValueError("Belohnungen nicht abrufbar (nur mit Partner/Affiliate und Kanalpunkten)")
+    web["rewards"] = sorted({r.get("title", "") for r in j.get("data", []) if r.get("title")}, key=str.lower)
+    return f"{len(web['rewards'])} Belohnungen geladen."
 
 
 # ---------------------------------------------------------------- Lokaler Server für die Szenen
@@ -670,7 +1024,10 @@ class Handler(BaseHTTPRequestHandler):
             return self.json(401, {"error": "Schlüssel fehlt oder ist falsch"})
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n).decode("utf-8") if 0 < n <= 65536 else "{}")
+            limit = 8 * 1024 * 1024 if path == "/api/sound" else 65536
+            if n > limit:
+                raise ValueError("zu groß")
+            body = json.loads(self.rfile.read(n).decode("utf-8") if n > 0 else "{}")
             if not isinstance(body, dict):
                 raise ValueError("JSON-Objekt erwartet")
         except ValueError as e:
@@ -680,8 +1037,10 @@ class Handler(BaseHTTPRequestHandler):
                 web_infos(body)
             elif path == "/api/settings":
                 web_settings(body)
+            elif path == "/api/sound":
+                return self.json(200, {"ok": True, "message": sound_upload(body), "state": web_state()})
             elif path == "/api/control":
-                msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1")
+                msg = web_control(str(body.get("action", "")), body.get("id"), local=self.client_address[0] == "127.0.0.1", body=body)
                 return self.json(200, {"ok": True, "message": msg, "state": web_state()})
             else:
                 return self.json(404, {"error": "unbekannt"})
@@ -1369,7 +1728,7 @@ def save_infos(pid):
 
 def infos_snapshot():
     with lock:
-        return {"type": "infos", "packs": {k: dict(v) for k, v in infos["packs"].items()}}
+        return {"type": "infos", "packs": {k: dict(v) for k, v in infos["packs"].items()}, "timers": dict(timers)}
 
 
 def each_source(fn):
@@ -1729,7 +2088,8 @@ def on_logout(props, prop):
 # Lautstärke usw. Darum liegen sie in settings.json. Im OBS-Fenster stehen nur noch Port, Pack-Quelle und der
 # Heimnetz-Schalter; Änderungen dort landen ebenfalls hier.
 GLOBAL_KEYS = ("port", "remote_on", "repo", "volume", "goal_follow", "goal_sub", "goal_bits", "hide_cmd", "tele_on",
-               "show_latest", "latest_items", "tele_url", "irl_auto", "irl_source", "irl_delay", "irl_back", "ignore")
+               "show_latest", "latest_items", "tele_url", "irl_auto", "irl_source", "irl_delay", "irl_back", "ignore",
+               "alerts", "rewards")
 WINDOW_KEYS = ("port", "repo", "remote_on")
 glob = {"loaded": None, "synced": False}
 
@@ -1836,7 +2196,10 @@ def script_load(settings):
     threading.Thread(target=telemetry_loop, daemon=True).start()
     obs.timer_add(irl_tick, 500)
     load_infos()
+    load_timers()
     obs.timer_add(migrate_tick, 5000)
+    threading.Thread(target=obs_stats_loop, daemon=True).start()
+    obs.obs_frontend_add_event_callback(on_frontend_event)
     log(f"Daten und Sounds: {DATA_DIR}")
     load_state()
     for key, desc, fn in HOTKEYS:
@@ -1858,6 +2221,7 @@ def script_save(settings):
 def script_unload():
     obs.timer_remove(irl_tick)
     obs.timer_remove(migrate_tick)
+    obs.obs_frontend_remove_event_callback(on_frontend_event)
     stop.set()
     stop_eventsub()
     stop_server()
@@ -1984,6 +2348,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   <nav class="tabs" id="tabs">
     <button data-tab="infos" class="on">Infos</button>
     <button data-tab="live">Live</button>
+    <button data-tab="alerts">Alerts</button>
     <button data-tab="packs">Packs</button>
     <button data-tab="settings">Einstellungen</button>
   </nav>
@@ -2013,8 +2378,32 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   </section>
 
   <section id="tab-live" class="hidden">
-    <div class="page-head"><h1>Live</h1><p>Alerts, Tests, Ziele und der Rückblick der laufenden Session.</p></div>
+    <div class="page-head"><h1>Live</h1><p>OBS steuern, Stream im Blick, Alerts, Ziele, Timer und der Rückblick der laufenden Session.</p></div>
     <div class="grid">
+      <div class="card stack">
+        <div class="card-head" style="margin:0"><h2>Stream</h2><span class="chip chip-sm" id="stream-chip"></span></div>
+        <dl class="meta" id="stream-stats"></dl>
+        <div class="row"><button class="btn btn-sm" id="stream-btn"></button><button class="btn btn-sm" id="rec-btn"></button></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Szenen</h2><p class="lead">Ein Klick schaltet in OBS um.</p></div>
+        <div class="row" id="scene-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Audio</h2><p class="lead">Quellen stumm schalten und wieder an.</p></div>
+        <div class="row" id="audio-buttons"></div>
+      </div>
+      <div class="card stack">
+        <div><h2>Timer</h2><p class="lead">Countdown in „Stream startet“, Pausen-Timer in „Kurze Pause“.</p></div>
+        <div class="field"><label>Countdown bis Stream-Start <span class="muted" id="timer-start-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-start-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="start" data-min="#timer-start-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="start">Stopp</button></div></div>
+        <div class="field"><label>Pausen-Timer <span class="muted" id="timer-pause-left"></span></label>
+          <div class="row"><input type="number" min="1" max="600" value="5" id="timer-pause-min" style="width:110px"><span class="muted">Min.</span>
+            <button class="btn btn-sm btn-primary" data-act="timer_start" data-id="pause" data-min="#timer-pause-min">Starten</button>
+            <button class="btn btn-sm" data-act="timer_stop" data-id="pause">Stopp</button></div></div>
+      </div>
       <div class="card stack">
         <div class="card-head" style="margin:0"><h2>Alerts</h2><span class="chip chip-sm" id="listeners"></span></div>
         <p class="lead" id="alert-state" style="margin:0"></p>
@@ -2054,8 +2443,28 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
       <div class="card stack hidden" id="irl-card">
         <h2>IRL</h2>
         <p id="irl-state"></p>
+        <div class="row" id="irl-cams"></div>
       </div>
     </div>
+  </section>
+
+  <section id="tab-alerts" class="hidden">
+    <div class="page-head"><h1>Alerts</h1><p>Je Alert-Art an/aus, Lautstärke, Mindestwert, eigene Texte und Sounds; dazu Aktionen für Kanalpunkte. Gilt für alle Packs.</p></div>
+    <div class="grid" id="alert-cards"></div>
+    <div class="grid" style="margin-top:16px">
+      <div class="card stack span-all">
+        <div class="card-head" style="margin:0"><h2>Kanalpunkte → Aktionen</h2><button class="btn btn-sm" data-act="rewards_load">Belohnungen von Twitch laden</button></div>
+        <p class="lead" style="margin:0">Löst eine Belohnung aus, passiert, was hier steht: Sound abspielen, Szene wechseln, Quelle einblenden – jeweils auf Wunsch nur für einige Sekunden. Der Name muss genau wie bei Twitch lauten.</p>
+        <div id="rules" class="stack"></div>
+        <div class="row"><button class="btn btn-sm" id="rule-add">Regel hinzufügen</button><button class="btn btn-sm btn-primary" id="rules-save">Regeln speichern</button></div>
+      </div>
+      <div class="card stack span-all">
+        <div><h2>Sounds für Kanalpunkte</h2><p class="lead" style="margin:0">MP3, OGG oder WAV bis 5 MB. Die Sounds je Alert-Art stehen oben bei der jeweiligen Art.</p></div>
+        <div id="extra-sounds" class="stack" style="gap:8px"></div>
+        <div><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="" hidden></label></div>
+      </div>
+    </div>
+    <datalist id="reward-titles"></datalist>
   </section>
 
   <section id="tab-packs" class="hidden">
@@ -2279,7 +2688,10 @@ document.addEventListener('click',async ev=>{
   if(b){
     if(b.dataset.confirm&&!confirm(b.dataset.confirm))return;
     b.disabled=true;
-    try{const r=await api('/api/control',{action:b.dataset.act,id:b.dataset.id});S=r.state;render();if(r.message)toast(r.message)}
+    const body={action:b.dataset.act,id:b.dataset.id};
+    if(b.dataset.min)body.minutes=parseFloat($(b.dataset.min).value||'0');
+    if(b.dataset.on!=null)body.on=b.dataset.on==='1';
+    try{const r=await api('/api/control',body);S=r.state;render();if(r.message)toast(r.message)}
     catch(e){toast(e.message)}
     finally{b.disabled=false}
     return;
@@ -2343,7 +2755,113 @@ function render(){
   $('#remote-urls').innerHTML=S.settings.remote_on?(S.remote_urls.length?S.remote_urls.map((u,i)=>`<div class="url" id="ru${i}">${esc(u)}</div><div><button class="btn btn-sm" data-copy="ru${i}">Kopieren</button></div>`).join('')
     :'<div class="alert alert-warn">Keine Netzwerk-Adresse gefunden.</div>'):'';
   $('#log').innerHTML=(S.log||[]).slice().reverse().map(([t,m])=>`<div>${esc(t)} · ${esc(m)}</div>`).join('');
+  renderObs();renderAlerts();
 }
+
+/* ---------- OBS: Stream, Szenen, Audio, Timer ---------- */
+const hms=s=>{s=Math.max(0,s|0);const h=s/3600|0,m=(s%3600)/60|0;return (h?h+':'+String(m).padStart(2,'0'):m)+':'+String(s%60).padStart(2,'0')};
+function setBtn(b,act,label,primary,confirmText){b.dataset.act=act;b.textContent=label;b.classList.toggle('btn-primary',!!primary);
+  if(confirmText)b.dataset.confirm=confirmText;else delete b.dataset.confirm}
+function renderObs(){
+  const o=S.obs||{},st=o.stats||{};
+  $('#stream-chip').textContent=o.streaming?`Live · ${hms(Date.now()/1000-(o.since||Date.now()/1000))}`:(o.recording?'Aufnahme läuft':'Offline');
+  $('#stream-chip').className='chip chip-sm '+(o.streaming?'chip-live chip-ok':o.recording?'chip-warn':'');
+  const pct=(a,b)=>b?` (${(a/b*100).toFixed(1).replace('.',',')} %)`:'';
+  const rows=[];
+  if(o.streaming){rows.push(['Bitrate',st.kbps!=null?num(st.kbps)+' kbit/s':'–']);rows.push(['Verlorene Frames (Netz)',num(st.dropped||0)+pct(st.dropped||0,st.frames)])}
+  rows.push(['FPS',st.fps?String(st.fps).replace('.',','):'–']);
+  rows.push(['Verzögert (Rendern)',num(st.lagged||0)+pct(st.lagged||0,st.rendered)]);
+  rows.push(['Übersprungen (Encoder)',num(st.skipped||0)+pct(st.skipped||0,st.encoded)]);
+  $('#stream-stats').innerHTML=rows.map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  setBtn($('#stream-btn'),o.streaming?'stream_stop':'stream_start',o.streaming?'Stream beenden':'Stream starten',!o.streaming,o.streaming?'Stream wirklich beenden?':'Stream jetzt starten?');
+  setBtn($('#rec-btn'),o.recording?'rec_stop':'rec_start',o.recording?'Aufnahme stoppen':'Aufnahme starten',false,o.recording?'Aufnahme stoppen?':null);
+  const sc=(o.scenes||[]).map(n=>`<button class="btn btn-sm ${n===o.current?'btn-primary':''}" data-act="scene" data-id="${esc(n)}">${esc(n)}</button>`).join('');
+  if($('#scene-buttons').innerHTML!==sc)$('#scene-buttons').innerHTML=sc||'<span class="muted small">Keine Szenen gefunden.</span>';
+  const au=(o.audio||[]).map(a=>`<button class="btn btn-sm ${a.muted?'btn-danger':''}" data-act="mute" data-id="${esc(a.name)}" data-on="${a.muted?0:1}">${a.muted?'Stumm: ':''}${esc(a.name)}</button>`).join('');
+  if($('#audio-buttons').innerHTML!==au)$('#audio-buttons').innerHTML=au||'<span class="muted small">Keine Audioquellen.</span>';
+  const left=k=>{const t=(o.timers||{})[k];return t>Date.now()?'noch '+hms((t-Date.now())/1000):''};
+  $('#timer-start-left').textContent=left('start');$('#timer-pause-left').textContent=left('pause');
+  $('#irl-cams').innerHTML=(o.cams||[]).map(c=>`<span class="chip chip-sm ${c.live?'chip-ok':'chip-danger'}">${esc(c.name)}: ${c.live?'Signal':'kein Signal'}</span>`).join('');
+}
+
+/* ---------- Alerts je Art ---------- */
+const ATYPES=[['follow','Follow'],['sub','Abo'],['resub','Abo verlängert'],['gift','Geschenk-Abos'],['cheer','Bits'],['raid','Raid'],['redeem','Kanalpunkte']];
+const MINLBL={cheer:'Erst ab … Bits',gift:'Erst ab … verschenkten Abos',raid:'Erst ab … Leuten'};
+let alertsBuilt=false;
+function soundOf(slot){return (S.sounds||[]).find(x=>x.slot===slot)}
+function buildAlerts(){
+  const box=$('#alert-cards');box.innerHTML='';
+  ATYPES.forEach(([t,l])=>{
+    const c=el('div','card stack');c.dataset.type=t;
+    c.innerHTML=`<div class="card-head" style="margin:0"><h2>${l}</h2><label class="check"><input type="checkbox" data-a="on">anzeigen</label></div>
+      <div class="field"><label>Lautstärke <span class="muted" data-v></span></label><input type="range" min="0" max="100" data-a="volume"></div>
+      ${MINLBL[t]?`<div class="field"><label>${MINLBL[t]}</label><input type="number" min="0" data-a="min"><span class="hint">0 = immer. Darunter zählt es trotzdem für Ziele und Rückblick.</span></div>`:''}
+      <div class="field"><label>Überschrift</label><input type="text" data-a="kind" placeholder="Standard des Packs"></div>
+      <div class="field"><label>Zeile darunter</label><input type="text" data-a="detail" placeholder="Standard des Packs"><span class="hint">Platzhalter: {name} {anzahl} {monate} {stufe} {belohnung}</span></div>
+      <div class="row"><span class="small muted" data-snd></span></div>
+      <div class="row"><label class="btn btn-sm">Sound hochladen<input type="file" accept=".mp3,.ogg,.wav,audio/*" data-upload="${t}" hidden></label>
+        <button class="btn btn-sm btn-danger hidden" data-del>Sound entfernen</button>
+        <button class="btn btn-sm" data-act="test_${t}">Testen</button></div>`;
+    const send=debounce(()=>{const a={};c.querySelectorAll('[data-a]').forEach(i=>a[i.dataset.a]=i.type==='checkbox'?i.checked:(i.type==='range'||i.type==='number')?parseInt(i.value||'0',10):i.value);
+      api('/api/settings',{alerts:{[t]:a}}).then(r=>{S=r.state}).catch(e=>toast('Nicht gespeichert: '+e.message))},600);
+    c.querySelectorAll('[data-a]').forEach(i=>{i.addEventListener(i.type==='checkbox'?'change':'input',send);
+      if(i.type==='range')i.addEventListener('input',()=>c.querySelector('[data-v]').textContent=i.value+' %')});
+    box.append(c);
+  });
+  alertsBuilt=true;
+}
+function renderAlerts(){
+  if(!alertsBuilt)buildAlerts();
+  ATYPES.forEach(([t])=>{
+    const c=$(`#alert-cards [data-type="${t}"]`),a=(S.alerts||{})[t]||{};
+    c.querySelectorAll('[data-a]').forEach(i=>setVal(i,a[i.dataset.a]));
+    c.querySelector('[data-v]').textContent=c.querySelector('[data-a=volume]').value+' %';
+    const snd=soundOf(t)||(t!=='default'?null:null),def=soundOf('default');
+    c.querySelector('[data-snd]').textContent=snd?`Sound: ${snd.file}`:def?`Sound: ${def.file} (für alle)`:'Sound: eingebauter Klang';
+    const del=c.querySelector('[data-del]');del.classList.toggle('hidden',!snd);del.dataset.file=snd?snd.file:'';
+  });
+  const extra=(S.sounds||[]).filter(x=>!x.slot);
+  const ex=extra.map(x=>`<div class="row"><span>${esc(x.file)}</span><button class="btn btn-sm" data-play="${esc(x.url)}">Anhören</button><button class="btn btn-sm btn-danger" data-act="sound_delete" data-id="${esc(x.file)}" data-confirm="${esc(x.file)} löschen?">Löschen</button></div>`).join('')||'<span class="muted small">Noch keine.</span>';
+  if($('#extra-sounds').innerHTML!==ex)$('#extra-sounds').innerHTML=ex;
+  $('#reward-titles').innerHTML=(S.reward_titles||[]).map(t=>`<option value="${esc(t)}">`).join('');
+  if(!rulesDirty)renderRules();
+}
+document.addEventListener('click',ev=>{
+  const d=ev.target.closest('[data-del]');
+  if(d&&d.dataset.file&&confirm('Eigenen Sound entfernen?'))api('/api/control',{action:'sound_delete',id:d.dataset.file}).then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast(e.message));
+  const p=ev.target.closest('[data-play]');if(p)new Audio(p.dataset.play).play().catch(()=>toast('Abspielen nicht möglich'));
+});
+document.addEventListener('change',ev=>{
+  const i=ev.target.closest('[data-upload]');if(!i||!i.files[0])return;
+  const file=i.files[0];if(file.size>5*1024*1024){toast('Größer als 5 MB');return}
+  const rd=new FileReader();rd.onload=()=>api('/api/sound',{slot:i.dataset.upload,filename:file.name,data:String(rd.result).split(',')[1]})
+    .then(r=>{S=r.state;render();toast(r.message)}).catch(e=>toast('Hochladen fehlgeschlagen: '+e.message));
+  rd.readAsDataURL(file);i.value='';
+});
+
+/* ---------- Kanalpunkte-Regeln (Entwurf bis „Regeln speichern“) ---------- */
+let rules=null,rulesDirty=false;
+function ruleRow(r,i){
+  const opt=(list,val,none)=>`<option value="">${none}</option>`+list.map(x=>`<option value="${esc(x)}" ${x===val?'selected':''}>${esc(x)}</option>`).join('');
+  const sounds=(S.sounds||[]).map(x=>x.file),scenes=(S.obs&&S.obs.scenes)||[];
+  return `<div class="alert stack" style="gap:10px" data-rule="${i}">
+    <div class="form-grid">
+      <div class="field"><label>Belohnung</label><input type="text" list="reward-titles" data-r="reward" value="${esc(r.reward||'')}" placeholder="Name wie bei Twitch"></div>
+      <div class="field"><label>Sound</label><select data-r="sound">${opt(sounds,r.sound,'kein Sound')}</select></div>
+      <div class="field"><label>Szene wechseln zu</label><select data-r="scene">${opt(scenes,r.scene,'nicht wechseln')}</select></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="scene_secs" value="${r.scene_secs||0}"><span class="hint">0 = dort bleiben</span></div>
+      <div class="field"><label>Quelle einblenden</label><input type="text" data-r="source" value="${esc(r.source||'')}" placeholder="Name der Quelle in OBS"></div>
+      <div class="field"><label>für Sekunden</label><input type="number" min="0" data-r="source_secs" value="${r.source_secs||0}"><span class="hint">0 = sichtbar lassen</span></div>
+    </div>
+    <div class="row" style="justify-content:space-between"><label class="check"><input type="checkbox" data-r="alert" ${r.alert!==false?'checked':''}>Alert zeigen</label>
+      <button class="btn btn-sm btn-danger" data-rule-del="${i}">Regel entfernen</button></div></div>`;
+}
+function renderRules(){rules=JSON.parse(JSON.stringify(S.rewards||[]));$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'}
+function readRules(){return $$('#rules [data-rule]').map(row=>{const r={};row.querySelectorAll('[data-r]').forEach(i=>r[i.dataset.r]=i.type==='checkbox'?i.checked:i.type==='number'?parseInt(i.value||'0',10):i.value);return r})}
+$('#rules').addEventListener('input',()=>rulesDirty=true);$('#rules').addEventListener('change',()=>rulesDirty=true);
+$('#rule-add').onclick=()=>{rules=readRules();rules.push({reward:'',alert:true});rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')};
+$('#rules').addEventListener('click',ev=>{const d=ev.target.closest('[data-rule-del]');if(!d)return;rules=readRules();rules.splice(+d.dataset.ruleDel,1);rulesDirty=true;$('#rules').innerHTML=rules.map(ruleRow).join('')||'<span class="muted small">Noch keine Regeln.</span>'});
+$('#rules-save').onclick=()=>api('/api/settings',{rewards:readRules().filter(r=>r.reward.trim())}).then(r=>{S=r.state;rulesDirty=false;renderRules();toast('Regeln gespeichert')}).catch(e=>toast('Nicht gespeichert: '+e.message));
 
 async function poll(){
   if(!KEY){showNoKey();return}

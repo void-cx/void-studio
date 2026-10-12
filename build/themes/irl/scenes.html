@@ -241,7 +241,8 @@ function start(){
 }
 function pause(){
   contours(stage);chips(stage).style.cssText='left:120px;top:80px';
-  hero('// kurz durchatmen','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines()]);
+  const h=hero('// kurz durchatmen','Kurze Pause',()=>['Bin gleich zurück','Chat bleibt offen',...latestLines()]);
+  const ct=put(h,'ct');pauseTimer(s=>ct.textContent=s>0?`Zurück in ${mmss(s)}`:'Gleich zurück');
   const m=makeMark({cls:'heromark',d:300,t:800});stage.appendChild(m);
   const g=put(stage,'goals','','position:absolute;left:120px;bottom:90px;width:460px');goalsInto(g);
 }
