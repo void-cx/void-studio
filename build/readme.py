@@ -25,7 +25,7 @@ def text(t):
     gn = t['game']
     coll = t.get('collname', f'VOID × {gn}')
     cap = t.get('capname', f'{gn} Spielaufnahme')
-    infos = ', '.join(f'„Info · {x}“' for x in ['Titel', 'Statuszeilen'] + t.get('infos', []))
+    infos = ', '.join(f'„{x}“' for x in ['Titel', 'Statuszeilen'] + t.get('infos', []))
     logo = r.get('logo', 'Start, Pause und Ende bauen die Bildmarke beim Szenenwechsel auf. Bei Raids, ab 5 Geschenk-Abos und ab 1.000 Bits auch im Alert.')
     out = f"""# VOID Szenen-Pack: {g}
 
@@ -43,7 +43,7 @@ Updates: „Nach Updates suchen“ und „Alle Pack-Updates installieren“. Die
 
 ## Texte anpassen
 
-In der Sammlung gibt es die Szene **„VOID · Infos“** mit Textquellen wie {infos}. Doppelklick auf eine Quelle, Text eintragen – die Overlays übernehmen ihn sofort. Leer heißt Standard, mehrere Zeilen werden zu wechselnden Zeilen bzw. einer Liste. Die Szene selbst nicht live zeigen.
+In der VOID-Studio-Oberfläche unter **Infos** (im Skript-Fenster „Im Browser öffnen“ oder als Dock in OBS): {infos}. Die Overlays übernehmen Änderungen sofort. Leer heißt Standard, mehrere Zeilen werden zu wechselnden Zeilen bzw. einer Liste.
 
 ## Inhalt
 

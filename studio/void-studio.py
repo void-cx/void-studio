@@ -5,7 +5,7 @@ Eins für alles:
   · Szenen-Packs verwalten: aus dem GitHub-Repo installieren, aktualisieren, entfernen
   · VOID Twitch Bridge: Alerts, Sounds, Chat, Ziele, letzte Unterstützer, Rückblick, Spiel-Telemetrie
   · IRL: bei Verbindungsabbruch selbst auf „Verbindung weg“ schalten und zurück
-  · Infos aus OBS: Textquellen „Info · …“ in der Szene „VOID · Infos“ füllen die Overlays (Spielname, Ort, …)
+  · Infos je Pack (Spielname, Strecke, Ort, Kameranamen …), gepflegt in der Web-Oberfläche, live in den Overlays
   · Szenensammlung direkt in OBS einrichten, ohne Import-Dialog
   · Web-Oberfläche unter http://127.0.0.1:8787/studio (auch als OBS-Dock und auf Wunsch vom Handy im Heimnetz)
 
@@ -396,10 +396,8 @@ def ctl_reset_bits(*_):
 # Die Seite selbst enthält nichts Geheimes; jede /api-Anfrage braucht den Schlüssel im Header X-Void-Key. Fremde
 # Webseiten kennen ihn nicht und dürfen den Header ohne CORS-Freigabe gar nicht senden.
 # Regel seit 1.0.4: Diese Anfragen laufen in Server-Threads und dürfen OBS nie auf die Oberfläche warten lassen.
-# Texte für die Info-Quellen gehen darum in eine Warteschlange, die info_tick im OBS-Takt abarbeitet; Szenen anlegen
-# geht nur aus OBS heraus.
+# Die Infos speichert VOID Studio selbst (infos/<pack>.json) und schickt sie an die Overlays – OBS bleibt außen vor.
 WEB_KEY_FILE = os.path.join(DATA_DIR, "web-key.txt")
-info_writes = queue.Queue()
 INFO_HELP = {
     "Titel": "Großer Titel in den Szenen. Leer = Standard des Packs.",
     "Statuszeilen": "Eine Zeile pro Text, sie wechseln sich ab. Ersetzt die Standardzeilen.",
@@ -470,13 +468,14 @@ def preview_url(p):
     return src_url(pick["file"]) if pick else None
 
 
-def info_labels():
-    pid = active_pack()
-    return pid, ((installed(pid) or {}).get("infos") or INFO_DEFAULT) if pid else []
+def info_fields(pid):
+    labels = (installed(pid) or {}).get("infos") or INFO_DEFAULT
+    vals = infos["packs"].get(pid, {})
+    return [{"label": lb, "value": vals.get(lb, ""), "help": INFO_HELP.get(lb, ""), "multiline": lb in MULTILINE} for lb in labels]
 
 
 def web_state():
-    pid, labels = info_labels()
+    pid = active_pack()
     with lock:
         live = {"paused": state["paused"], "session": state["session"], "followers": state["followers"],
                 "subs": state["subs"], "latest": state["latest"], "bits_goal": state["bits_goal"]}
@@ -488,8 +487,7 @@ def web_state():
         "studio_changelog": s.get("changelog", []),
         "collection": obs.obs_frontend_get_current_scene_collection(),
         "pack": {"id": pid, "name": (installed(pid) or {}).get("name", pid)} if pid else None,
-        "infos": [{"label": lb, "value": info["data"].get(lb, ""), "exists": lb in info["data"], "help": INFO_HELP.get(lb, ""),
-                   "multiline": lb in MULTILINE} for lb in labels],
+        "infos": [{"id": p["id"], "name": p["name"], "fields": info_fields(p["id"])} for p in pack_list() if p.get("installed")],
         "twitch": {"login": twitch_state["login"], "connected": current_ws[0] is not None, "saved": bool(load_token()),
                    "device": web["device"], "status": twitch_status()},
         "live": dict(live, volume=cfg["volume"], goals=snapshot()["goals"]),
@@ -506,31 +504,23 @@ def web_state():
 
 
 def web_infos(body):
-    """{Label: Text} → Warteschlange; info_tick schreibt die Texte im OBS-Takt in die Quellen."""
-    _, labels = info_labels()
-    for label, text in body.items():
-        if label in labels:
-            info_writes.put((label, str(text if text is not None else "")[:2000]))
-
-
-def apply_info_writes():
-    """Im OBS-Takt: Texte in die Quellen „Info · …“ schreiben (nur libobs, keine Oberfläche)."""
-    while True:
-        try:
-            label, text = info_writes.get_nowait()
-        except queue.Empty:
-            return
-        src = obs.obs_get_source_by_name(INFO_PREFIX + label)
-        if not src:
-            log(f"Infos: Quelle „{INFO_PREFIX}{label}“ fehlt – in OBS unter VOID Studio „Infos-Szene anlegen“.")
-            continue
-        st = obs.obs_data_create()
-        try:
-            obs.obs_data_set_string(st, "text", text)
-            obs.obs_source_update(src, st)
-        finally:
-            obs.obs_data_release(st)
-            obs.obs_source_release(src)
+    """{"pack": id, "values": {Label: Text}} → speichern und an die Overlays schicken."""
+    pid = str(body.get("pack") or "")
+    if not installed(pid):
+        raise ValueError("Pack nicht installiert")
+    labels = set((installed(pid) or {}).get("infos") or INFO_DEFAULT)
+    with lock:
+        vals = dict(infos["packs"].get(pid, {}))
+        for label, text in (body.get("values") or {}).items():
+            if label in labels:
+                text = str(text if text is not None else "")[:2000].strip()
+                if text:
+                    vals[label] = text
+                else:
+                    vals.pop(label, None)
+        infos["packs"][pid] = vals
+    save_infos(pid)
+    send_all(infos_snapshot())
 
 
 def web_settings(body):
@@ -691,8 +681,7 @@ class Handler(BaseHTTPRequestHandler):
         q.put(json.dumps(snapshot(), ensure_ascii=False))
         if irl["live"] is not None:
             q.put(json.dumps(irl_snapshot()))
-        if info["data"]:
-            q.put(json.dumps(info_snapshot(), ensure_ascii=False))
+        q.put(json.dumps(infos_snapshot(), ensure_ascii=False))
         if badges:
             q.put(json.dumps({"type": "badges", "map": badges}))
         with clients_lock:
@@ -1330,18 +1319,36 @@ def setup_collection(pid, quiet=False):
     return name
 
 
-# ---------- Infos aus OBS: Szene „VOID · Infos“ mit Textquellen „Info · …“ ----------
-INFO_SCENE = "VOID · Infos"
+# ---------- Infos je Pack: Titel, Spielname, Ort, Kameranamen … ----------
+# Gespeichert in infos/<pack>.json, gepflegt in der Web-Oberfläche. Jedes Overlay erkennt sein Pack am eigenen Pfad
+# (…/packs/<id>/) und nimmt sich aus {type:'infos', packs:{…}} nur seine Werte.
+# Bis 1.1.0 lagen die Texte in OBS (Szene „VOID · Infos“, Quellen „Info · …“); die werden einmal übernommen.
+INFO_DIR = os.path.join(DATA_DIR, "infos")
 INFO_PREFIX = "Info · "
 INFO_DEFAULT = ["Titel", "Statuszeilen"]
-INFO_HINT = ("Doppelklick auf eine Info-Quelle und Text eintragen – die Overlays übernehmen ihn sofort. "
-             "Leer = Standard. Mehrere Zeilen = Wechsel bzw. Liste. Diese Szene nicht live zeigen.")
-info = {"data": {}}
-info_lock = threading.Lock()
+infos = {"packs": {}, "checked": set()}
 
 
-def info_snapshot():
-    return {"type": "info", "data": info["data"]}
+def load_infos():
+    try:
+        for fn in os.listdir(INFO_DIR):
+            if fn.endswith(".json"):
+                with open(os.path.join(INFO_DIR, fn), encoding="utf-8") as f:
+                    data = json.load(f)
+                infos["packs"][fn[:-5]] = {str(k): str(v) for k, v in data.items() if v}
+    except (OSError, ValueError):
+        pass
+
+
+def save_infos(pid):
+    os.makedirs(INFO_DIR, exist_ok=True)
+    with open(os.path.join(INFO_DIR, pid + ".json"), "w", encoding="utf-8") as f:
+        json.dump(infos["packs"].get(pid, {}), f, ensure_ascii=False, indent=2)
+
+
+def infos_snapshot():
+    with lock:
+        return {"type": "infos", "packs": {k: dict(v) for k, v in infos["packs"].items()}}
 
 
 def each_source(fn):
@@ -1353,32 +1360,6 @@ def each_source(fn):
     finally:
         if lst:
             obs.source_list_release(lst)
-
-
-def source_text(src):
-    st = obs.obs_source_get_settings(src)
-    try:
-        return obs.obs_data_get_string(st, "text")
-    finally:
-        obs.obs_data_release(st)
-
-
-def info_tick():
-    """Texte der Info-Quellen lesen; bei einer Änderung an alle Szenen schicken. Nur lesen: läuft im Grafik-Thread
-    (siehe IRL oben), Szenen oder Quellen anlegen darf hier nie passieren."""
-    try:
-        apply_info_writes()
-        data = {}
-        def read(src):
-            n = obs.obs_source_get_name(src) or ""
-            if n.startswith(INFO_PREFIX):
-                data[n[len(INFO_PREFIX):]] = source_text(src).strip()
-        each_source(read)
-        if data != info["data"]:
-            info["data"] = data
-            send_all(info_snapshot())
-    except Exception as e:
-        log(f"Infos: {e}")
 
 
 def active_pack():
@@ -1395,69 +1376,33 @@ def active_pack():
     return found[0] if found else None
 
 
-def text_kind():
-    latest = getattr(obs, "obs_get_latest_input_type_id", None)
-    for kind in ("text_gdiplus", "text_ft2_source"):
-        k = latest(kind) if latest else None
-        if k:
-            return k
-    return None
-
-
-def ensure_infos(announce=False):
-    """Szene „VOID · Infos“ mit den Feldern des aktiven Packs anlegen bzw. ergänzen (vorhandene Texte bleiben)."""
-    with info_lock:
-        _ensure_infos(announce)
-
-
-def _ensure_infos(announce):
-    pid = active_pack()
-    if not pid:
-        return announce and log("Infos: Diese Szenensammlung gehört zu keinem VOID-Pack.")
-    labels = (installed(pid) or {}).get("infos") or INFO_DEFAULT
-    kind = text_kind()
-    if not kind:
-        return log("Infos: keine Textquelle in dieser OBS-Version gefunden.")
-    src = obs.obs_get_source_by_name(INFO_SCENE)
-    if src:
-        scene = obs.obs_scene_from_source(src)          # geliehen, gehört zu src
-    else:
-        scene = obs.obs_scene_create(INFO_SCENE)
-        src = obs.obs_source_get_ref(obs.obs_scene_get_source(scene))
-        obs.obs_scene_release(scene)
-        scene = obs.obs_scene_from_source(src)
-    added = []
+def migrate_tick():
+    """Alle paar Sekunden im OBS-Takt, nur lesend: Texte aus der alten Szene „VOID · Infos“ einmal je Pack übernehmen."""
     try:
-        y = 40
-        for label in [None] + list(labels):
-            name = INFO_PREFIX + label if label else "Hinweis"
-            have = obs.obs_get_source_by_name(name)
-            if have:
-                obs.obs_source_release(have)
-            else:
-                st = obs.obs_data_create()
-                obs.obs_data_set_string(st, "text", "" if label else INFO_HINT)
-                obj = obs.obs_source_create(kind, name, st, None)
-                item = obs.obs_scene_add(scene, obj)
-                pos = obs.vec2()
-                pos.x, pos.y = 40.0, float(y)
-                obs.obs_sceneitem_set_pos(item, pos)
+        pid = active_pack()
+        if not pid or pid in infos["checked"]:
+            return
+        infos["checked"].add(pid)
+        if os.path.isfile(os.path.join(INFO_DIR, pid + ".json")):
+            return
+        old = {}
+        def read(src):
+            n = obs.obs_source_get_name(src) or ""
+            if n.startswith(INFO_PREFIX):
+                st = obs.obs_source_get_settings(src)
+                text = obs.obs_data_get_string(st, "text").strip()
                 obs.obs_data_release(st)
-                obs.obs_source_release(obj)
-                added.append(label or name)
-            y += 60
-    finally:
-        obs.obs_source_release(src)
-    if added or announce:
-        log(f"Infos: Szene „{INFO_SCENE}“ " + (f"ergänzt um {', '.join(a for a in added if a != 'Hinweis')}." if added else "ist vollständig."))
-
-
-def on_frontend_event(event):
-    if event in (obs.OBS_FRONTEND_EVENT_FINISHED_LOADING, obs.OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED):
-        try:                                    # Oberflächen-Thread: hier darf die Infos-Szene entstehen
-            ensure_infos()
-        except Exception as e:
-            log(f"Infos: {e}")
+                if text:
+                    old[n[len(INFO_PREFIX):]] = text
+        each_source(read)
+        if old:
+            with lock:
+                infos["packs"][pid] = old
+            save_infos(pid)
+            send_all(infos_snapshot())
+            log(f"Infos für {pid} aus der Szene „VOID · Infos“ übernommen – die Szene wird nicht mehr gebraucht und kann weg.")
+    except Exception as e:
+        log(f"Infos: {e}")
 
 
 def install_pack(pid):
@@ -1626,11 +1571,6 @@ def ui_setup(props, prop):
     return True
 
 
-def ui_infos(props, prop):
-    ensure_infos(announce=True)
-    return True
-
-
 def ui_open(props, prop):
     pid = selected(props)
     d = os.path.join(PACKS_DIR, pid) if pid and os.path.isdir(os.path.join(PACKS_DIR, pid)) else PACKS_DIR
@@ -1770,9 +1710,6 @@ def script_properties():
         tip(obs.obs_properties_add_button(g, "m_setup", "In OBS einrichten", ui_setup),
             "Legt die Szenensammlung des Packs in OBS an oder erneuert sie nach einem Update. "
             "Kamera, Spielaufnahme und eigene Quellen bleiben. Nicht für die gerade aktive Sammlung.")
-        tip(obs.obs_properties_add_button(g, "m_infos", "Infos-Szene anlegen", ui_infos),
-            "Szene „VOID · Infos“ mit Textquellen für Titel, Spielname, Ort … in der aktiven Sammlung. "
-            "Entsteht sonst beim Laden von selbst.")
         tip(obs.obs_properties_add_button(g, "m_open", "Pack-Ordner öffnen (import.json)", ui_open),
             "Darin liegt import.json, falls du lieber über Szenensammlung → Importieren gehst.")
         obs.obs_properties_add_button(g, "m_remove", "Entfernen", ui_remove)
@@ -1862,7 +1799,7 @@ def script_properties():
 
     group(p, "g_packs", "Szenen-Packs",
           "Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Texte wie Spielname oder Ort "
-          "trägst du in OBS in der Szene „VOID · Infos“ ein.", packs)
+          "trägst du in der Web-Oberfläche unter Infos ein.", packs)
     group(p, "g_web", "Web-Oberfläche",
           "Alles aus diesem Fenster und die Infos (Spielname, Ort …) übersichtlich im Browser oder als Dock in OBS.", webui)
     group(p, "g_twitch", "Twitch", None, twitch)
@@ -1943,8 +1880,8 @@ def script_load(settings):
     in_thread(check_updates)
     threading.Thread(target=telemetry_loop, daemon=True).start()
     obs.timer_add(irl_tick, 500)
-    obs.timer_add(info_tick, 1000)
-    obs.obs_frontend_add_event_callback(on_frontend_event)
+    load_infos()
+    obs.timer_add(migrate_tick, 5000)
     log(f"Daten und Sounds: {DATA_DIR}")
     load_state()
     for key, desc, fn in HOTKEYS:
@@ -1965,8 +1902,7 @@ def script_save(settings):
 
 def script_unload():
     obs.timer_remove(irl_tick)
-    obs.timer_remove(info_tick)
-    obs.obs_frontend_remove_event_callback(on_frontend_event)
+    obs.timer_remove(migrate_tick)
     stop.set()
     stop_eventsub()
     stop_server()
@@ -2007,6 +1943,7 @@ main{padding:16px;max-width:1100px;margin:0 auto}
 .field label{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px;margin-bottom:5px}
 .field small{display:block;color:var(--mute);font-size:12px;margin-top:4px}
 .saved{color:var(--green);font-weight:500;opacity:0;transition:opacity .3s}.saved.on{opacity:1}
+select{padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
 input[type=text],input[type=number],textarea{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
 textarea{min-height:84px;resize:vertical}
 input:focus,textarea:focus{outline:2px solid rgba(210,123,255,.55);outline-offset:0;border-color:transparent}
@@ -2067,7 +2004,7 @@ input[type=range]{width:100%;accent-color:var(--lilac)}
   <section id="tab-infos">
     <div class="grid">
       <div class="card" id="infos-card">
-        <h2 id="infos-title">Infos</h2>
+        <div class="row" style="justify-content:space-between"><h2 id="infos-title">Infos</h2><select id="infos-pack" class="hidden"></select></div>
         <p class="sub" id="infos-sub"></p>
         <div id="infos-form"></div>
       </div>
@@ -2230,15 +2167,24 @@ function setVal(inp,v){if(document.activeElement===inp||busy.has(inp))return;
   if(inp.type==='checkbox')inp.checked=!!v;else if(inp.value!==String(v??''))inp.value=v??''}
 function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
 
-/* ---------- Infos ---------- */
-let infoKeys='';
+/* ---------- Infos (je Pack, gespeichert in VOID Studio) ---------- */
+let infoKeys='',infoPack=null;
+try{infoPack=localStorage.getItem('voidInfoPack')}catch(_){}
+$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;try{localStorage.setItem('voidInfoPack',infoPack)}catch(_){};infoKeys='';renderInfos()};
 function renderInfos(){
-  const form=$('#infos-form'),list=S.infos||[];
-  $('#infos-title').textContent=S.pack?`Infos · ${S.pack.name}`:'Infos';
-  $('#infos-sub').innerHTML=S.pack
-    ?'Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+(list.some(i=>!i.exists)?' <br><b style="color:var(--yellow)">In OBS fehlt die Szene „VOID · Infos“ oder ein Feld darin: in OBS unter Werkzeuge → Skripte → VOID Studio „Infos-Szene anlegen“.</b>':'')
-    :`Die aktive Szenensammlung „${esc(S.collection||'')}“ gehört zu keinem VOID-Pack. In OBS eine Pack-Sammlung wählen.`;
-  const keys=list.map(i=>i.label).join('|');
+  const packs=S.infos||[],form=$('#infos-form'),sel=$('#infos-pack');
+  if(!packs.length){$('#infos-title').textContent='Infos';form.innerHTML='';infoKeys='';
+    $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';sel.classList.add('hidden');return}
+  /* Vorauswahl: zuletzt gewählt, sonst das Pack der aktiven Szenensammlung, sonst das erste */
+  if(!packs.some(p=>p.id===infoPack))infoPack=(S.pack&&packs.some(p=>p.id===S.pack.id))?S.pack.id:packs[0].id;
+  const opts=packs.map(p=>`${p.id}:${p.name}`).join('|');
+  if(sel.dataset.o!==opts){sel.dataset.o=opts;sel.innerHTML=packs.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+  sel.value=infoPack;sel.classList.toggle('hidden',packs.length<2);
+  const pack=packs.find(p=>p.id===infoPack),list=pack.fields;
+  $('#infos-title').textContent=packs.length<2?`Infos · ${pack.name}`:'Infos';
+  $('#infos-sub').textContent='Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+
+    (S.pack&&S.pack.id!==pack.id?` Gerade aktiv in OBS: ${S.pack.name}.`:'');
+  const keys=pack.id+'|'+list.map(i=>i.label).join('|');
   if(keys!==infoKeys){
     infoKeys=keys;form.innerHTML='';
     list.forEach(i=>{
@@ -2246,10 +2192,10 @@ function renderInfos(){
       let inp;
       if(i.label==='Wunschliste'){
         inp=el('input');inp.type='checkbox';const c=el('label','check');c.append(inp,document.createTextNode('„Auf die Wunschliste!“-Sticker zeigen'));
-        f.append(lab,c);inp.onchange=()=>saveInfo(i.label,inp.checked?'ja':'',lab);
+        f.append(lab,c);inp.onchange=()=>saveInfo(pack.id,i.label,inp.checked?'ja':'',lab);
       }else{
         inp=i.multiline?el('textarea'):el('input');if(!i.multiline)inp.type='text';
-        inp.oninput=debounce(()=>saveInfo(i.label,inp.value,lab),700);
+        inp.oninput=debounce(()=>saveInfo(pack.id,i.label,inp.value,lab),700);
         f.append(lab,inp);
       }
       inp.dataset.info=i.label;
@@ -2260,8 +2206,9 @@ function renderInfos(){
   list.forEach(i=>{const inp=form.querySelector(`[data-info="${CSS.escape(i.label)}"]`);if(!inp)return;
     if(inp.type==='checkbox')setVal(inp,/^(ja|an|1|x|yes|true)$/i.test(i.value));else setVal(inp,i.value)});
 }
-async function saveInfo(label,value,lab){
-  try{await api('/api/infos',{[label]:value});const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
+async function saveInfo(pack,label,value,lab){
+  try{const r=await api('/api/infos',{pack,values:{[label]:value}});S=r.state;
+    const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
   catch(e){toast('Nicht gespeichert: '+e.message)}
 }
 

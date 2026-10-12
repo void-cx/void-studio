@@ -31,6 +31,7 @@ main{padding:16px;max-width:1100px;margin:0 auto}
 .field label{display:flex;justify-content:space-between;gap:8px;font-weight:600;font-size:13px;margin-bottom:5px}
 .field small{display:block;color:var(--mute);font-size:12px;margin-top:4px}
 .saved{color:var(--green);font-weight:500;opacity:0;transition:opacity .3s}.saved.on{opacity:1}
+select{padding:7px 10px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
 input[type=text],input[type=number],textarea{width:100%;padding:9px 11px;border-radius:9px;border:1px solid var(--line);background:#0A0A1F;color:var(--text);font:inherit}
 textarea{min-height:84px;resize:vertical}
 input:focus,textarea:focus{outline:2px solid rgba(210,123,255,.55);outline-offset:0;border-color:transparent}
@@ -91,7 +92,7 @@ input[type=range]{width:100%;accent-color:var(--lilac)}
   <section id="tab-infos">
     <div class="grid">
       <div class="card" id="infos-card">
-        <h2 id="infos-title">Infos</h2>
+        <div class="row" style="justify-content:space-between"><h2 id="infos-title">Infos</h2><select id="infos-pack" class="hidden"></select></div>
         <p class="sub" id="infos-sub"></p>
         <div id="infos-form"></div>
       </div>
@@ -254,15 +255,24 @@ function setVal(inp,v){if(document.activeElement===inp||busy.has(inp))return;
   if(inp.type==='checkbox')inp.checked=!!v;else if(inp.value!==String(v??''))inp.value=v??''}
 function debounce(fn,ms){let h;return(...a)=>{clearTimeout(h);h=setTimeout(()=>fn(...a),ms)}}
 
-/* ---------- Infos ---------- */
-let infoKeys='';
+/* ---------- Infos (je Pack, gespeichert in VOID Studio) ---------- */
+let infoKeys='',infoPack=null;
+try{infoPack=localStorage.getItem('voidInfoPack')}catch(_){}
+$('#infos-pack').onchange=()=>{infoPack=$('#infos-pack').value;try{localStorage.setItem('voidInfoPack',infoPack)}catch(_){};infoKeys='';renderInfos()};
 function renderInfos(){
-  const form=$('#infos-form'),list=S.infos||[];
-  $('#infos-title').textContent=S.pack?`Infos · ${S.pack.name}`:'Infos';
-  $('#infos-sub').innerHTML=S.pack
-    ?'Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+(list.some(i=>!i.exists)?' <br><b style="color:var(--yellow)">In OBS fehlt die Szene „VOID · Infos“ oder ein Feld darin: in OBS unter Werkzeuge → Skripte → VOID Studio „Infos-Szene anlegen“.</b>':'')
-    :`Die aktive Szenensammlung „${esc(S.collection||'')}“ gehört zu keinem VOID-Pack. In OBS eine Pack-Sammlung wählen.`;
-  const keys=list.map(i=>i.label).join('|');
+  const packs=S.infos||[],form=$('#infos-form'),sel=$('#infos-pack');
+  if(!packs.length){$('#infos-title').textContent='Infos';form.innerHTML='';infoKeys='';
+    $('#infos-sub').textContent='Noch kein Pack installiert – unter „Packs“ eins installieren.';sel.classList.add('hidden');return}
+  /* Vorauswahl: zuletzt gewählt, sonst das Pack der aktiven Szenensammlung, sonst das erste */
+  if(!packs.some(p=>p.id===infoPack))infoPack=(S.pack&&packs.some(p=>p.id===S.pack.id))?S.pack.id:packs[0].id;
+  const opts=packs.map(p=>`${p.id}:${p.name}`).join('|');
+  if(sel.dataset.o!==opts){sel.dataset.o=opts;sel.innerHTML=packs.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('')}
+  sel.value=infoPack;sel.classList.toggle('hidden',packs.length<2);
+  const pack=packs.find(p=>p.id===infoPack),list=pack.fields;
+  $('#infos-title').textContent=packs.length<2?`Infos · ${pack.name}`:'Infos';
+  $('#infos-sub').textContent='Die Overlays übernehmen jede Änderung sofort. Leer = Standard des Packs.'+
+    (S.pack&&S.pack.id!==pack.id?` Gerade aktiv in OBS: ${S.pack.name}.`:'');
+  const keys=pack.id+'|'+list.map(i=>i.label).join('|');
   if(keys!==infoKeys){
     infoKeys=keys;form.innerHTML='';
     list.forEach(i=>{
@@ -270,10 +280,10 @@ function renderInfos(){
       let inp;
       if(i.label==='Wunschliste'){
         inp=el('input');inp.type='checkbox';const c=el('label','check');c.append(inp,document.createTextNode('„Auf die Wunschliste!“-Sticker zeigen'));
-        f.append(lab,c);inp.onchange=()=>saveInfo(i.label,inp.checked?'ja':'',lab);
+        f.append(lab,c);inp.onchange=()=>saveInfo(pack.id,i.label,inp.checked?'ja':'',lab);
       }else{
         inp=i.multiline?el('textarea'):el('input');if(!i.multiline)inp.type='text';
-        inp.oninput=debounce(()=>saveInfo(i.label,inp.value,lab),700);
+        inp.oninput=debounce(()=>saveInfo(pack.id,i.label,inp.value,lab),700);
         f.append(lab,inp);
       }
       inp.dataset.info=i.label;
@@ -284,8 +294,9 @@ function renderInfos(){
   list.forEach(i=>{const inp=form.querySelector(`[data-info="${CSS.escape(i.label)}"]`);if(!inp)return;
     if(inp.type==='checkbox')setVal(inp,/^(ja|an|1|x|yes|true)$/i.test(i.value));else setVal(inp,i.value)});
 }
-async function saveInfo(label,value,lab){
-  try{await api('/api/infos',{[label]:value});const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
+async function saveInfo(pack,label,value,lab){
+  try{const r=await api('/api/infos',{pack,values:{[label]:value}});S=r.state;
+    const s=lab.querySelector('.saved');s.classList.add('on');setTimeout(()=>s.classList.remove('on'),1500)}
   catch(e){toast('Nicht gespeichert: '+e.message)}
 }
 

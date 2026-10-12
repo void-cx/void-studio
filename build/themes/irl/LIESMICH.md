@@ -30,7 +30,7 @@ VOID Studio überwacht **Kamera 1**. Bricht das Signal in einer Kamera-Szene ab,
 
 ## Ort, Wetter und Kameranamen
 
-In der Szene **„VOID · Infos“** stehen die Textquellen „Info · Ort“, „Info · Wetter-Ort“, „Info · Kamera 1“ bis „Info · Kamera 4“ sowie „Info · Titel“ und „Info · Statuszeilen“. Doppelklick, Text eintragen – das HUD übernimmt ihn sofort, auch unterwegs per Fernsteuerung von OBS. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; „Info · Wetter-Ort“ nimmt einen anderen Ort fürs Wetter.
+In der VOID-Studio-Oberfläche unter **Infos**: Ort, Wetter-Ort, Kamera 1 bis Kamera 4, Titel und Statuszeilen. Das HUD übernimmt Änderungen sofort – unterwegs auch vom Handy, wenn in VOID Studio „Auch im Heimnetz erreichbar“ an ist und das Handy per VPN (z. B. Tailscale) im Heimnetz hängt. Das Wetter (Open-Meteo) sucht den Ort bis zum „·“, also reicht z. B. „Hamburg · Speicherstadt“; Wetter-Ort nimmt einen anderen Ort fürs Wetter.
 
 ## HUD und feste Parameter
 
