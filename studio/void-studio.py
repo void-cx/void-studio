@@ -1247,6 +1247,8 @@ def make_import(pdir):
 # ---------- Szenensammlung direkt in OBS einrichten ----------
 # OBS hat dafür keinen Skript-Aufruf; der Import-Dialog schreibt die Sammlung aber auch nur als JSON in den
 # Sammlungsordner. Genau das machen wir, mit den Geräte-Einstellungen einer schon vorhandenen Fassung.
+# OBS liest den Ordner aber nur beim Start ein (der Import-Dialog lädt ihn intern neu, für Skripte gibt es dafür
+# keinen Aufruf): nach dem Einrichten ist ein Neustart von OBS nötig.
 KEEP_KINDS = ("browser_source", "scene", "group")      # die kommen immer frisch aus dem Pack
 
 
@@ -1325,7 +1327,7 @@ def setup_collection(pid, quiet=False):
         json.dump(data, f, ensure_ascii=False, indent=4)
     if not quiet:
         msg = (f"„{name}“ ist in OBS {'erneuert (Kamera, Spielaufnahme und eigene Quellen übernommen)' if replaced else 'eingerichtet'}. "
-               f"Szenensammlung → {name}. Steht sie noch nicht im Menü, OBS einmal neu starten.")
+               f"OBS jetzt einmal neu starten – OBS liest die Szenensammlungen nur beim Start ein –, dann Szenensammlung → {name}.")
         mgr["notes"].append(msg)
         log(msg)
     return name
@@ -1453,7 +1455,7 @@ def install_pack(pid):
         new = installed(pid)
         if not old:
             coll = setup_collection(pid, quiet=True)
-            note = (f"{info['name']} {info['version']} installiert und in OBS eingerichtet: Szenensammlung → {coll}. Steht sie noch nicht im Menü, OBS einmal neu starten."
+            note = (f"{info['name']} {info['version']} installiert und in OBS eingerichtet. OBS jetzt einmal neu starten, dann Szenensammlung → {coll}."
                     if coll else
                     f"{info['name']} {info['version']} installiert. Jetzt „In OBS einrichten“ klicken oder importieren: Szenensammlung → Importieren → {dest}{os.sep}import.json")
         elif old.get("structure") != new.get("structure"):
@@ -2114,7 +2116,7 @@ dl.meta{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:0;font-s
   </section>
 
   <section id="tab-packs" class="hidden">
-    <div class="page-head"><h1>Packs</h1><p>Szenen-Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten.</p></div>
+    <div class="page-head"><h1>Packs</h1><p>Szenen-Packs installieren, als Szenensammlung in OBS einrichten und aktuell halten. Nach dem Einrichten OBS einmal neu starten – OBS liest Szenensammlungen nur beim Start ein.</p></div>
     <div class="stack">
       <div id="studio-update" class="alert alert-warn hidden"></div>
       <div id="pack-busy" class="alert hidden"></div>

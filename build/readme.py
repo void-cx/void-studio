@@ -35,7 +35,7 @@ def text(t):
 
 1. Einmalig VOID Studio einrichten: Python 3.11 oder 3.12 (64 Bit) installieren und in OBS unter Werkzeuge → Skripte → Python-Einstellungen eintragen. Dann `void-studio.py` aus dem neuesten Release unter Werkzeuge → Skripte → `+` hinzufügen.
 2. Im VOID-Studio-Fenster „{g}“ auswählen und „Installieren / aktualisieren“ klicken. VOID Studio richtet die Szenensammlung dabei gleich in OBS ein.
-3. In OBS Szenensammlung → „{coll}“ wählen. Steht sie noch nicht im Menü, OBS einmal neu starten. (Alternativ wie bisher: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
+3. OBS einmal neu starten (OBS liest Szenensammlungen nur beim Start ein), dann Szenensammlung → „{coll}“ wählen. (Alternativ wie bisher: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
 4. Kamera-Gerät und bei „{cap}“ das Spielfenster wählen.
 5. „Mit Twitch verbinden“ – nur einmal für alle Packs.
 

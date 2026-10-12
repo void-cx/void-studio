@@ -6,7 +6,7 @@ Neun OBS-Szenen für Streams unterwegs, mit einer bis vier Kameras: Stream start
 
 1. Einmalig VOID Studio einrichten: Python 3.11 oder 3.12 (64 Bit) installieren und in OBS unter Werkzeuge → Skripte → Python-Einstellungen eintragen. Dann `void-studio.py` aus dem neuesten Release unter Werkzeuge → Skripte → `+` hinzufügen.
 2. Im VOID-Studio-Fenster „IRL“ auswählen und „Installieren / aktualisieren“ klicken. VOID Studio richtet die Szenensammlung dabei gleich in OBS ein.
-3. In OBS Szenensammlung → „VOID IRL“ wählen. Steht sie noch nicht im Menü, OBS einmal neu starten. (Alternativ: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
+3. OBS einmal neu starten (OBS liest Szenensammlungen nur beim Start ein), dann Szenensammlung → „VOID IRL“ wählen. (Alternativ: Szenensammlung → Importieren → `import.json` aus dem Pack-Ordner.)
 4. Kameras einrichten (siehe unten).
 5. „Mit Twitch verbinden“ – nur einmal für alle Packs.
 
